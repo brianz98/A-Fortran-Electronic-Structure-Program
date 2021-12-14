@@ -190,10 +190,6 @@ module read_in_integrals
             write(iunit, '(1X, A, 1X, I0)') 'Number of basis functions:', sys%nbasis
             write(iunit, '(1X, A, 1X, ES15.8)') 'E_nuc:', int_store%e_nuc
 
-            write(iunit, *) 'Two-electron integrals'
-            do i = 1, size(int_store%eri)
-                write(iunit, '(1X, I0, 1X, ES15.8)') i, int_store%eri(i)
-            end do
         end subroutine print_int_info
 
 end module read_in_integrals

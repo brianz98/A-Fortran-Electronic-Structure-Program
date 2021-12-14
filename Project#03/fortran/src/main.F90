@@ -3,6 +3,7 @@ program main
     use const
     use read_in_integrals
     use system
+    use hf
 
     implicit none
 
@@ -17,6 +18,8 @@ program main
 
     call read_integrals_in(sys, int_store)
     call print_int_info(sys, int_store)
+
+    call do_hartree_fock(sys, int_store)
     
 end program main
 

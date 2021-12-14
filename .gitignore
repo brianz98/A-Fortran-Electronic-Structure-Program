@@ -2,3 +2,4 @@
 *sublime*
 *.mod
 *.o
+build/
