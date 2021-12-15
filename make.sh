@@ -15,7 +15,7 @@ if [ $n_flag -eq 1 ]
 then
     rm -r build
     mkdir build; cd $_
-    cmake ..
+    cmake .. -DCMAKE_BUILD_TYPE=Debug
     make
     cp els.x ..
     cd ..

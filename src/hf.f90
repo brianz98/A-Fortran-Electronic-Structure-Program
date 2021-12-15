@@ -13,7 +13,7 @@ module hf
          type(int_store_t), intent(in) :: int_store
          type(system_t), intent(in) :: sys
 
-         type(mat_t) :: ovlp
+         type(mat_t) :: ovlp, fockmat
          real(p) :: ortmat(sys%nbasis,sys%nbasis)
          real(p) :: fock(sys%nbasis,sys%nbasis)
          real(p) :: coeff(sys%nbasis,sys%nbasis)
@@ -21,10 +21,10 @@ module hf
          real(p) :: tmpmat(sys%nbasis,sys%nbasis)
 
          ! Initialise the overlap matrix stored in int_store_t into a mat_t object
-         call init_mat_t(sys, int_store%ovlp, ovlp)
+         call init_mat_t(int_store%ovlp, ovlp)
 
          ! S^(-1/2) = C * L^(-1/2) * C^(T)
-         call orthogonalise(ovlp)
+         call diagonalise(ovlp)
          call build_ortmat(ovlp, ortmat)
 
          ! Initial guess Fock matrix
@@ -33,15 +33,24 @@ module hf
          fock = matmul(int_store%core_hamil, ortmat)
          fock = matmul(transpose(ortmat), fock)
 
-         call init_mat_
+         call init_mat_t(fock, fockmat)
+         call diagonalise(fockmat)
 
+         ! Transform coefficient into AO basis
+         fockmat%A = matmul(ortmat, fockmat%A)
+
+         ! Build initial density
+         ! [TODO]: this is just hard-coded for now for water, URGENT: add geom_read_in
+         call build_density(fockmat%A, density, 5)
+
+         print*, density
 
       end subroutine do_hartree_fock
 
 
-      subroutine orthogonalise(mat)
+      subroutine diagonalise(mat)
          ! For a symmetric matrix A we produce
-         ! A = CLC^(-1)
+         ! A = C * L * C^T
          ! With L and C stored in a mat_t data structure
 
          use linalg
@@ -54,21 +63,22 @@ module hf
          call eigs(mat, ierr)
          if (ierr /= 0) call error('hf::orthogonalise', 'Orthogonalisation failed!')
 
-      end subroutine orthogonalise
+      end subroutine diagonalise
 
-      subroutine init_mat_t(sys, matrix, mat)
+      subroutine init_mat_t(matrix, mat)
          use read_in_integrals
          use linalg, only: mat_t
          use system
         
-         type(system_t), intent(in) :: sys
          real(p), intent(in) :: matrix(:,:)
          type(mat_t), intent(out) :: mat
 
-         mat%N = sys%nbasis
-         allocate(mat%A(mat%N, mat%N))
-         mat%A(:,:) = matrix(:,:)
-         allocate(mat%W(sys%nbasis))
+         associate(N=>size(matrix, dim=1))
+            mat%N = N
+            allocate(mat%A(N,N))
+            mat%A(:,:) = matrix(:,:)
+            allocate(mat%W(N))
+         end associate
 
       end subroutine init_mat_t
 
@@ -77,16 +87,17 @@ module hf
          use linalg, only: mat_t
 
          type(mat_t), intent(in) :: ovlp
-         real(p), allocatable, intent(out) :: ortmat(:,:)
+         real(p), intent(out) :: ortmat(:,:)
 
-         real(p), allocatable :: tmpmat(:,:)
+         real(p) :: tmpmat(size(ortmat, dim=1), size(ortmat, dim=1))
 
          integer :: i
          
-         associate(n=>ovlp%N, diag=>ovlp%W)
-            allocate(ortmat(n, n), source = 0.0_p)
-            allocate(tmpmat(n, n), source = 0.0_p)
-            do i = 1, n
+         tmpmat(:,:) = 0.0_p
+         ortmat(:,:) = 0.0_p
+
+         associate(diag=>ovlp%W)
+            do i = 1, size(ortmat, dim=1)
                ortmat(i,i) = 1/sqrt(diag(i))
             end do
          end associate
@@ -94,8 +105,17 @@ module hf
          tmpmat = matmul(ortmat, transpose(ovlp%A))
          ortmat = matmul(ovlp%A, tmpmat)
 
-         deallocate(tmpmat)
-
       end subroutine build_ortmat
+
+      subroutine build_density(coeff, density, nocc)
+         real(p), intent(in) :: coeff(:,:)
+         integer, intent(in) :: nocc
+         real(p), intent(out) :: density(:,:)
+
+         density = matmul(coeff(:, 1:nocc), transpose(coeff(:, 1:nocc)))
+
+      end subroutine build_density
+
+
          
 end module hf
