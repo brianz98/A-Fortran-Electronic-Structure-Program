@@ -20,33 +20,45 @@ module hf
          real(p) :: density(sys%nbasis,sys%nbasis)
          real(p) :: tmpmat(sys%nbasis,sys%nbasis)
 
+         type(state_t) :: st
+         integer :: iter, maxiter
+
+         maxiter = 50
+
+         ! Build the orthogonalisation matrix S^-1/2
+
          ! Initialise the overlap matrix stored in int_store_t into a mat_t object
          call init_mat_t(int_store%ovlp, ovlp)
+         ovlp%ao_ort = ovlp%ao
 
          ! S^(-1/2) = C * L^(-1/2) * C^(T)
          call diagonalise(ovlp)
          call build_ortmat(ovlp, ortmat)
 
-         ! Initial guess Fock matrix
-         ! F_0 = S^T(-1/2) * H_core * S^(-1/2)
-         fock = 0.0_p
-         fock = matmul(int_store%core_hamil, ortmat)
-         fock = matmul(transpose(ortmat), fock)
+         call deallocate_mat_t(ovlp)
 
-         call init_mat_t(fock, fockmat)
-         call diagonalise(fockmat)
+         ! Initial guess Fock matrix is H_core
+         ! F'_0 = S^T(-1/2) * F * S^(-1/2)
+         call init_mat_t(int_store%core_hamil, fockmat)
 
-         ! Transform coefficient into AO basis
-         fockmat%A = matmul(ortmat, fockmat%A)
+         do iter = 1, maxiter
+            fockmat%ao_ort = matmul(transpose(ortmat), matmul(fockmat%ao, ortmat))
 
-         ! Build initial density
-         ! [TODO]: this is just hard-coded for now for water, URGENT: add geom_read_in
-         call build_density(fockmat%A, density, 5)
+            call diagonalise(fockmat)
 
-         print*, density
+            ! Transform coefficient into nonorthogonal AO basis
+            fockmat%A = transpose(matmul(ortmat, fockmat%A))
+
+            ! [TODO]: this is just hard-coded for now for water, URGENT: add geom_read_in
+            call build_density(fockmat%A, density, 5)
+
+            call scf_energy(density, fockmat%ao, st, int_store)
+            print*, st%energy
+
+            call build_fock(sys, density, fockmat%ao, int_store)
+         end do
 
       end subroutine do_hartree_fock
-
 
       subroutine diagonalise(mat)
          ! For a symmetric matrix A we produce
@@ -60,8 +72,10 @@ module hf
 
          integer :: ierr
 
+         ! Overwrite the previous coeff matrix
+         mat%A = mat%ao_ort
          call eigs(mat, ierr)
-         if (ierr /= 0) call error('hf::orthogonalise', 'Orthogonalisation failed!')
+         if (ierr /= 0) call error('hf::diagonalise', 'Diagonalisation failed!')
 
       end subroutine diagonalise
 
@@ -75,12 +89,26 @@ module hf
 
          associate(N=>size(matrix, dim=1))
             mat%N = N
+            allocate(mat%ao(N,N))
             allocate(mat%A(N,N))
-            mat%A(:,:) = matrix(:,:)
+            allocate(mat%ao_ort(N,N))
+            mat%ao(:,:) = matrix(:,:)
             allocate(mat%W(N))
          end associate
 
       end subroutine init_mat_t
+
+      subroutine deallocate_mat_t(mat)
+         use linalg, only: mat_t
+
+         type(mat_t), intent(inout) :: mat
+
+         mat%N = 0
+         deallocate(mat%ao)
+         deallocate(mat%ao_ort)
+         deallocate(mat%A)
+         deallocate(mat%W)
+      end subroutine deallocate_mat_t
 
       subroutine build_ortmat(ovlp, ortmat)
 
@@ -112,10 +140,51 @@ module hf
          integer, intent(in) :: nocc
          real(p), intent(out) :: density(:,:)
 
-         density = matmul(coeff(:, 1:nocc), transpose(coeff(:, 1:nocc)))
+         density = matmul(transpose(coeff(1:nocc, :)), coeff(1:nocc, :))
 
       end subroutine build_density
 
-
+      subroutine scf_energy(density, fock, st, int_store)
          
+         use system, only: state_t
+         use read_in_integrals, only: int_store_t
+
+         real(p), intent(in) :: density(:,:)
+         real(p), intent(in) :: fock(:,:)
+         type(int_store_t), intent(in) :: int_store
+         type(state_t), intent(inout) :: st
+
+         st%energy_old = st%energy
+
+         st%energy = sum(density * (int_store%core_hamil + fock))
+
+      end subroutine scf_energy
+         
+      subroutine build_fock(sys, density, fock, int_store)
+
+         use read_in_integrals, only: int_store_t, eri_ind
+         use system, only: system_t
+
+         real(p), intent(in) :: density(:,:)
+         type(int_store_t), intent(in) :: int_store
+         type(system_t), intent(in) :: sys
+         real(p), intent(out) :: fock(:,:)
+
+         integer :: i, j, k, l
+
+         associate(eri=>int_store%eri)
+            do j = 1, sys%nbasis
+               do i = 1, sys%nbasis
+                  fock(i,j) = int_store%core_hamil(i,j)
+                  do l = 1, sys%nbasis
+                     do k = 1, sys%nbasis
+                        fock(i,j) = fock(i,j) + density(k,l) * (2*eri(eri_ind(i,j,k,l)) - eri(eri_ind(i,k,j,l)))
+                     end do
+                  end do
+               end do
+            end do
+         end associate
+
+      end subroutine build_fock
+
 end module hf

@@ -6,7 +6,9 @@ module linalg
    type mat_t
       ! A structure that holds the original matrix, the eigenvalues and the eigenvalue matrix
       integer :: N = -1 ! Dimension
-      real(p), allocatable :: A(:,:) ! Original/eigenvector matrix
+      real(p), allocatable :: ao(:,:) ! AO basis matrix
+      real(p), allocatable :: ao_ort(:,:) ! Orthonormal AO basis
+      real(p), allocatable :: A(:,:) ! eigenvector matrix after diagonalisation
       real(p), allocatable :: W(:) ! Eigenvalues
    end type mat_t
 
