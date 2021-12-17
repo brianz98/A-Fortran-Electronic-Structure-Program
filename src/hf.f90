@@ -21,7 +21,7 @@ module hf
          real(p) :: tmpmat(sys%nbasis,sys%nbasis)
 
          type(state_t) :: st
-         integer :: iter, maxiter, iunit
+         integer :: iter, maxiter, iunit, i
          logical :: conv = .false.
 
          iunit = 6
@@ -63,6 +63,10 @@ module hf
             if (conv) then
                write(iunit, '(1X, A)') 'Convergence reached within tolerance.'
                write(iunit, '(1X, A, 1X, F15.8)') 'Final SCF Energy (Hartree):', st%energy
+               write(iunit, '(1X, A)') 'Orbital energies (Hartree):'
+               do i = size(fockmat%W), 1, -1
+                  write(iunit, '(1X, I0, 1X, F15.8)') i, fockmat%W(i)
+               end do
                exit
             else
                write(iunit, '(1X, A, 1X, I0, F15.8)') 'Iteration', iter, st%energy
@@ -70,8 +74,6 @@ module hf
 
             call build_fock(sys, density, fockmat%ao, int_store)
          end do
-
-
 
       end subroutine do_hartree_fock
 
@@ -198,6 +200,7 @@ module hf
                   fock(i,j) = int_store%core_hamil(i,j)
                   do l = 1, sys%nbasis
                      do k = 1, sys%nbasis
+                        ! [TODO]: This step can be sped up with pre-computed lookup arrays
                         fock(i,j) = fock(i,j) + density(k,l) * (2*eri(eri_ind(i,j,k,l)) - eri(eri_ind(i,k,j,l)))
                      end do
                   end do
