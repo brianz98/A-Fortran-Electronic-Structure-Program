@@ -21,12 +21,19 @@ module hf
          real(p) :: tmpmat(sys%nbasis,sys%nbasis)
 
          type(state_t) :: st
-         integer :: iter, maxiter
+         integer :: iter, maxiter, iunit
+         logical :: conv = .false.
 
+         iunit = 6
          maxiter = 50
+         write(iunit, '(1X, 12("-"))')
+         write(iunit, '(1X, A)') 'Hartree-Fock'
+         write(iunit, '(1X, 12("-"))')
+
+         allocate(st%density(sys%nbasis,sys%nbasis), source=0.0_p)
+         allocate(st%density_old(sys%nbasis,sys%nbasis), source=0.0_p)
 
          ! Build the orthogonalisation matrix S^-1/2
-
          ! Initialise the overlap matrix stored in int_store_t into a mat_t object
          call init_mat_t(int_store%ovlp, ovlp)
          ovlp%ao_ort = ovlp%ao
@@ -52,11 +59,19 @@ module hf
             ! [TODO]: this is just hard-coded for now for water, URGENT: add geom_read_in
             call build_density(fockmat%A, density, 5)
 
-            call scf_energy(density, fockmat%ao, st, int_store)
-            print*, st%energy
+            call update_scf_energy(density, fockmat%ao, st, int_store, conv)
+            if (conv) then
+               write(iunit, '(1X, A)') 'Convergence reached within tolerance.'
+               write(iunit, '(1X, A, 1X, F15.8)') 'Final SCF Energy (Hartree):', st%energy
+               exit
+            else
+               write(iunit, '(1X, A, 1X, I0, F15.8)') 'Iteration', iter, st%energy
+            end if
 
             call build_fock(sys, density, fockmat%ao, int_store)
          end do
+
+
 
       end subroutine do_hartree_fock
 
@@ -144,7 +159,7 @@ module hf
 
       end subroutine build_density
 
-      subroutine scf_energy(density, fock, st, int_store)
+      subroutine update_scf_energy(density, fock, st, int_store, conv)
          
          use system, only: state_t
          use read_in_integrals, only: int_store_t
@@ -153,12 +168,17 @@ module hf
          real(p), intent(in) :: fock(:,:)
          type(int_store_t), intent(in) :: int_store
          type(state_t), intent(inout) :: st
+         logical, intent(inout) :: conv
 
+         st%density_old = st%density
+         st%density = density
+         
          st%energy_old = st%energy
-
          st%energy = sum(density * (int_store%core_hamil + fock))
 
-      end subroutine scf_energy
+         if (sqrt(sum((density-st%density_old)**2)) < 1e5*depsilon .and. abs(st%energy-st%energy_old) < 1e5*depsilon) conv = .true.
+
+      end subroutine update_scf_energy
          
       subroutine build_fock(sys, density, fock, int_store)
 

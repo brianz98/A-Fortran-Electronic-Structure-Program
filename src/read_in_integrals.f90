@@ -41,11 +41,10 @@ module read_in_integrals
             ele_nuc_f = 'dat/v.dat'
             eri_f = 'dat/eri.dat'
 
-            !########### Nuclear repulsion ############
-            !write(iunit, *) 'Reading nuclear repulsion...'
-            !open(newunit=ir, file=enuc_f, status='old', form='formatted')
-            !read(ir, *) int_store%e_nuc
-            !close(ir)
+            write(iunit, '(1X, 16("-"))')
+            write(iunit, '(1X, A)') 'Integral read-in'
+            write(iunit, '(1X, 16("-"))')
+
 
             !########### Get basis info ###############
             write(iunit, *) 'Getting number of basis functions...'
@@ -114,7 +113,7 @@ module read_in_integrals
             int_store%core_hamil = int_store%ke + int_store%ele_nuc
 
             !######### ERI / Two-body integrals ########
-            write(iunit, *) 'Reading two-body integrals'
+            write(iunit, *) 'Reading two-body integrals...'
             open(newunit=ir, file=eri_f, status='old', form='formatted')
 
             do
@@ -175,7 +174,7 @@ module read_in_integrals
             end if
         end function eri_ind
 
-        subroutine print_int_info(sys, int_store)
+        subroutine print_sys_info(sys, int_store)
             use system
 
             type(system_t), intent(in) :: sys
@@ -184,12 +183,13 @@ module read_in_integrals
             integer :: iunit = 6
             integer :: i
 
-            write(iunit, '(1X, 64("="))')
-            write(iunit, '(1X, A)') 'Integral information'
-            write(iunit, '(1X, 64("="))')
+            write(iunit, '(1X, 20("-"))')
+            write(iunit, '(1X, A)') 'System information'
+            write(iunit, '(1X, 20("-"))')
+            write(iunit, '(1X, A, 1X, I0)') 'Number of electrons:', sys%nel
             write(iunit, '(1X, A, 1X, I0)') 'Number of basis functions:', sys%nbasis
             write(iunit, '(1X, A, 1X, ES15.8)') 'E_nuc:', int_store%e_nuc
 
-        end subroutine print_int_info
+        end subroutine print_sys_info
 
 end module read_in_integrals

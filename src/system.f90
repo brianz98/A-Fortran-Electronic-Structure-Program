@@ -4,7 +4,7 @@ module system
    implicit none
 
    type system_t
-      integer :: nel = 0      
+      integer :: nel = 0
       integer :: nbasis = 0
       integer :: natoms = 0
 
@@ -16,6 +16,8 @@ module system
       integer :: iter = 0
       real(p) :: energy = 0.0_p
       real(p) :: energy_old = 0.0_p
+      real(p), allocatable :: density(:,:)
+      real(p), allocatable :: density_old(:,:)
    end type state_t
 
 end module system
