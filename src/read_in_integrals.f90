@@ -42,10 +42,10 @@ module read_in_integrals
             eri_f = 'dat/eri.dat'
 
             !########### Nuclear repulsion ############
-            write(iunit, *) 'Reading nuclear repulsion...'
-            open(newunit=ir, file=enuc_f, status='old', form='formatted')
-            read(ir, *) int_store%e_nuc
-            close(ir)
+            !write(iunit, *) 'Reading nuclear repulsion...'
+            !open(newunit=ir, file=enuc_f, status='old', form='formatted')
+            !read(ir, *) int_store%e_nuc
+            !close(ir)
 
             !########### Get basis info ###############
             write(iunit, *) 'Getting number of basis functions...'

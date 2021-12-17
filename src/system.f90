@@ -4,7 +4,12 @@ module system
    implicit none
 
    type system_t
+      integer :: nel = 0      
       integer :: nbasis = 0
+      integer :: natoms = 0
+
+      integer, allocatable :: charges(:)
+      real(p), allocatable :: coords(:,:)
    end type system_t
 
    type state_t
