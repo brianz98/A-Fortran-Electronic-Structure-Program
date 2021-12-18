@@ -5,6 +5,7 @@ program main
     use system, only: system_t
     use hf, only: do_hartree_fock
     use geometry, only: read_geometry_in
+    use mp2, only: do_mp2
 
     implicit none
 
@@ -40,5 +41,12 @@ program main
     if (t1<t0) t1 = t1+count_max
     write(iunit, '(1X, A, F7.5, A)') 'Time taken for Hartree-Fock:', real(t1-t0)/count_rate, "s"
     t0=t1
+
+    call do_mp2(sys, int_store)
+
+    call date_and_time(VALUES=date_values)
+    write(iunit, '(1X, A, 1X, I2.2, "/", I2.2, "/", I4.4, 1X, A, 1X, I2.2, 2(":", I2.2))') &
+                "Finished running on", date_values(3:1:-1), "at", date_values(5:7)
+
     
 end program main

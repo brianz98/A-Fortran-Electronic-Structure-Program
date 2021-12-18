@@ -11,7 +11,7 @@ module hf
          use linalg
 
          type(int_store_t), intent(in) :: int_store
-         type(system_t), intent(in) :: sys
+         type(system_t), intent(inout) :: sys
 
          type(mat_t) :: ovlp, fockmat
          real(p) :: ortmat(sys%nbasis,sys%nbasis)
@@ -25,7 +25,7 @@ module hf
          logical :: conv = .false.
 
          iunit = 6
-         maxiter = 50
+         maxiter = 100
          write(iunit, '(1X, 12("-"))')
          write(iunit, '(1X, A)') 'Hartree-Fock'
          write(iunit, '(1X, 12("-"))')
@@ -65,15 +65,24 @@ module hf
                write(iunit, '(1X, A, 1X, F15.8)') 'Final SCF Energy (Hartree):', st%energy
                write(iunit, '(1X, A)') 'Orbital energies (Hartree):'
                do i = size(fockmat%W), 1, -1
-                  write(iunit, '(1X, I0, 1X, F15.8)') i, fockmat%W(i)
+                  write(iunit, '(1X, I3, 1X, F15.8)') i, fockmat%W(i)
                end do
+
+               ! Copied for return / use in MP2
+               sys%e_hf = st%energy
+               allocate(sys%canon_coeff, source=fockmat%A)
+               allocate(sys%canon_levels, source=fockmat%W)
                exit
             else
-               write(iunit, '(1X, A, 1X, I0, F15.8)') 'Iteration', iter, st%energy
+               write(iunit, '(1X, A, 1X, I3, F15.8)') 'Iteration', iter, st%energy
             end if
 
             call build_fock(sys, density, fockmat%ao, int_store)
          end do
+
+         if (.not. conv) then
+            write(iunit, '(1X, A)') 'Convergence not reached, please increase maxiter.'
+         end if
 
       end subroutine do_hartree_fock
 
@@ -178,7 +187,7 @@ module hf
          st%energy_old = st%energy
          st%energy = sum(density * (int_store%core_hamil + fock))
 
-         if (sqrt(sum((density-st%density_old)**2)) < 1e5*depsilon .and. abs(st%energy-st%energy_old) < 1e5*depsilon) conv = .true.
+         if (sqrt(sum((density-st%density_old)**2)) < 1e-5 .and. abs(st%energy-st%energy_old) < 1e-5) conv = .true.
 
       end subroutine update_scf_energy
          
@@ -193,15 +202,20 @@ module hf
          real(p), intent(out) :: fock(:,:)
 
          integer :: i, j, k, l
+         integer :: ij, kl, ik, jl
 
          associate(eri=>int_store%eri)
             do j = 1, sys%nbasis
                do i = 1, sys%nbasis
                   fock(i,j) = int_store%core_hamil(i,j)
+                  ij = eri_ind(i,j)
                   do l = 1, sys%nbasis
+                     jl = eri_ind(j,l)
                      do k = 1, sys%nbasis
                         ! [TODO]: This step can be sped up with pre-computed lookup arrays
-                        fock(i,j) = fock(i,j) + density(k,l) * (2*eri(eri_ind(i,j,k,l)) - eri(eri_ind(i,k,j,l)))
+                        kl = eri_ind(k,l)
+                        ik = eri_ind(i,k)
+                        fock(i,j) = fock(i,j) + density(k,l) * (2*eri(eri_ind(ij,kl)) - eri(eri_ind(ik,jl)))
                      end do
                   end do
                end do

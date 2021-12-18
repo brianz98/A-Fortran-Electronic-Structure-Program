@@ -11,6 +11,7 @@ module read_in_integrals
         real(p), allocatable :: core_hamil(:,:)
         ! Too big, we compress with symmetry
         real(p), allocatable :: eri(:)
+        real(p), allocatable :: eri_mo(:)
     end type int_store_t
     
     contains
@@ -23,7 +24,8 @@ module read_in_integrals
             type(system_t), intent(inout) :: sys
 
             character(20) :: enuc_f, ovlp_f, ke_f, ele_nuc_f, eri_f
-            integer :: i, j, iunit, ir, natoms, ios, nbasis, ibasis, jbasis, abasis, bbasis
+            integer :: i, j, iunit, ir, natoms, ios, nbasis
+            integer :: ibasis, jbasis, abasis, bbasis, ij_ind, ab_ind
             real(p) :: intgrl
 
             ! stdout unit is 6
@@ -121,7 +123,9 @@ module read_in_integrals
                 ! If EOF reached
                 if (ios==iostat_end) exit
                 ! 8-fold permutational symmetry, we use compression to save space
-                int_store%eri(eri_ind(ibasis, jbasis, abasis, bbasis)) = intgrl
+                ij_ind = eri_ind(ibasis, jbasis)
+                ab_ind = eri_ind(abasis, bbasis)
+                int_store%eri(eri_ind(ij_ind, ab_ind)) = intgrl
             end do
             close(ir)
 
@@ -149,29 +153,20 @@ module read_in_integrals
             end associate
         end subroutine init_int_store
 
-        elemental function eri_ind(i, j, a, b) result(ind)
-            integer, intent(in) :: i, j, a, b
+        elemental function eri_ind(i, j) result(ind)
+            ! This function can be a general version for i,j,a,b, but 
+            ! we can also use storage to cut down on unnecessary instructrions:
+            ! i.e. by storing intermediate results ij and ab
+
+            integer, intent(in) :: i, j
             integer :: ind
 
-            integer :: ij, ab
-
             if (i >= j) then
-                ij = i*(i-1)/2 + j
+                ind = i*(i-1)/2 + j
             else
-                ij = j*(j-1)/2 + i
+                ind = j*(j-1)/2 + i
             end if
 
-            if (a >= b) then
-                ab = a*(a-1)/2 + b
-            else
-                ab = b*(b-1)/2 + a
-            end if
-
-            if (ij >= ab) then
-                ind = ij*(ij-1)/2 + ab
-            else
-                ind = ab*(ab-1)/2 + ij
-            end if
         end function eri_ind
 
         subroutine print_sys_info(sys, int_store)
