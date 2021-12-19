@@ -42,14 +42,16 @@ module geometry
 
         end subroutine read_geometry_in
 
-        subroutine get_bond_lengths(coords, bondlengths)
-            real(p), intent(in) :: coords(:,:)
+        subroutine get_bond_lengths(sys, bondlengths)
+            use system, only: system_t
+
+            type(system_t), intent(in) :: sys
             real(p), allocatable, intent(out) :: bondlengths(:,:)
 
             integer :: i, j
 
             ! Negligible memeory cost to store the full matrix rather than the lower triangular
-            associate(natoms=>size(coords, dim=1))
+            associate(natoms=>sys%natoms, coords=>sys%coords)
                 allocate(bondlengths(natoms, natoms), source=0.0_p)
 
                 do i = 1, natoms-1
@@ -71,10 +73,10 @@ module geometry
 
             integer :: i, j
 
-            call get_bond_lengths(sys%coords, bondlengths)
+            call get_bond_lengths(sys, bondlengths)
 
             e_nuc = 0.0_p
-            do j = 2, size(sys%charges)
+            do j = 2, sys%natoms
                 do i = 1, j-1
                     e_nuc = e_nuc + sys%charges(i)*sys%charges(j)/bondlengths(i,j)
                 end do

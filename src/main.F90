@@ -50,13 +50,13 @@ program main
 
     write(iunit, '(1X, 64("="))')
     write(iunit, '(1X, A)') 'Final energy breakdown'
-    write(iunit, '(1X, A24, 1X, F15.7)') 'E_HF:', sys%e_hf
-    write(iunit, '(1X, A24, 1X, F15.7)') 'E_MP2:', sys%e_mp2
-    write(iunit, '(1X, A24, 1X, F15.7)') 'E_CCSD:', sys%e_ccsd
-    write(iunit, '(1X, A24, 1X, F15.7)') 'E_CCSD(T):', sys%e_ccsd_t
+    write(iunit, '(1X, A, 1X, F12.7)') 'E_HF:                   ', sys%e_hf
+    write(iunit, '(1X, A, 1X, F12.7)') 'E_MP2:                  ', sys%e_mp2
+    write(iunit, '(1X, A, 1X, F12.7)') 'E_CCSD:                 ', sys%e_ccsd
+    write(iunit, '(1X, A, 1X, F12.7)') 'E_CCSD(T):              ', sys%e_ccsd_t
     write(iunit, '(1X, 40("-"))')
-    write(iunit, '(1X, A24, 1X, F15.7)') 'Total electronic energy:', sys%e_hf+sys%e_mp2+sys%e_ccsd+sys%e_ccsd_t
-    write(iunit, '(1X, A24, 1X, F15.7)') 'Total energy:', sys%e_hf+sys%e_mp2+sys%e_ccsd+sys%e_ccsd_t + int_store%e_nuc
+    write(iunit, '(1X, A, 1X, F12.7)') 'Total electronic energy:', sys%e_hf+sys%e_mp2+sys%e_ccsd+sys%e_ccsd_t
+    write(iunit, '(1X, A, 1X, F12.7)') 'Total energy:           ', sys%e_hf+sys%e_mp2+sys%e_ccsd+sys%e_ccsd_t + int_store%e_nuc
 
     call date_and_time(VALUES=date_values)
     write(iunit, '(1X, 64("="))')

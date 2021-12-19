@@ -4,7 +4,7 @@ module read_in_integrals
     implicit none
 
     public
-    private :: ioff
+    private :: ioff, bignum
 
     integer, parameter :: bignum = 1000
     integer :: ioff(bignum)
