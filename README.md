@@ -3,16 +3,16 @@ This project is based on the Crawford Group's excellent [C++ Programming Tutoria
 The end goal of this project will be performing HF, MP2, CCSD, and CCSD(T), as per the original tutorial, but with additional support for multicore processors (modern CPUs, GPUs).
 
 ## Progress
-~~1. Geometry read-in~~
-~~2. Integral read-in~~
-~~3. Nuclear repulsion energy calculation~~
-~~4. Hartree-Fock without symmetry~~
-~~5. Pretty printing, time reporting~~
-~~6. MP2 without symmetry~~
-7. CCSD without symmetry
-8. Adapting Hartree-Fock with symmetry
-9. Ditto for MP2
-10. Ditto for CCSD
-11. CCSD(T) with symmetry
-12. OpenMP / MPI parallelisation
-13. GPU adaptation for MP2 and CCSD/(T)
+- [x] Geometry read-in
+- [x] Integral read-in
+- [x] Nuclear repulsion energy calculation
+- [x] Hartree-Fock without symmetry
+- [x] Pretty printing, time reporting
+- [x] MP2 without symmetry
+- [ ] CCSD without symmetry
+- [ ] Adapting Hartree-Fock with symmetry
+- [ ] Ditto for MP2
+- [ ] Ditto for CCSD
+- [ ] CCSD(T) with symmetry
+- [ ] OpenMP / MPI parallelisation
+- [ ] GPU adaptation for MP2 and CCSD/(T)
