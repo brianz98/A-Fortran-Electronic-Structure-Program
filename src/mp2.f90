@@ -92,10 +92,16 @@ module mp2
          integer :: i, j, k, l, p, q, r, s, a, b
          integer :: kl, ij, pq, rs, pqrs, s_up
          integer :: ia, ja, jb, ib
+         integer :: iunit = 6
 
          n = sys%nbasis
          tmpdim = n*(n+1)/2
 
+         write(iunit, '(1X, 10("-"))')
+         write(iunit, '(1X, A)') 'MP2'
+         write(iunit, '(1X, 10("-"))')
+
+         write(iunit, '(1X, A)') 'Performing AO to MO ERI transformation...'
          ! dp used because 'p' is already a variable here
          allocate(tmp_a(n, n, n, n), source=0.0_dp)
          allocate(tmp_b(n, n, n, n), source=0.0_dp)
@@ -111,7 +117,7 @@ module mp2
                   do i = 1, n
                      ij = eri_ind(i,j)
                      do p = 1, n
-                        tmp_a(p, j, k, l) = tmp_a(p, j, k, l) + eri(eri_ind(ij,kl))*C(p,i)
+                        tmp_a(p,j,k,l) = tmp_a(p,j,k,l) + eri(eri_ind(ij,kl))*C(p,i)
                      end do 
                   end do
                end do
@@ -125,7 +131,7 @@ module mp2
                do p = 1, n
                   do j = 1, n
                      do q = 1, n
-                        tmp_b(p,q, k, l) = tmp_b(p,q, k,l) + tmp_a(p, j, k,l)*C(q,j)
+                        tmp_b(p,q,k,l) = tmp_b(p,q,k,l) + tmp_a(p,j,k,l)*C(q,j)
                      end do 
                   end do
                end do
@@ -188,6 +194,7 @@ module mp2
          end do
          end associate
 
+         write(iunit, '(1X, A)') 'Calculating MP2 energy...'
          nocc = sys%nel/2
          associate(e=>sys%canon_levels, eri=>int_store%eri_mo, emp=>sys%e_mp2)
          do i = 1, nocc
@@ -205,7 +212,7 @@ module mp2
             end do
          end do
          end associate
-         print*, sys%e_mp2
+         write(iunit, '(1X, A, 1X, F15.8)') 'MP2 correlation energy (Hartree):', sys%e_mp2
 
       end subroutine do_mp2
          

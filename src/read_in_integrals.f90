@@ -3,6 +3,12 @@ module read_in_integrals
 
     implicit none
 
+    public
+    private :: ioff
+
+    integer, parameter :: bignum = 1000
+    integer :: ioff(bignum)
+
     type int_store_t
         real(p) :: e_nuc = 0.0_p
         real(p), allocatable :: ovlp(:,:)
@@ -118,6 +124,8 @@ module read_in_integrals
             write(iunit, *) 'Reading two-body integrals...'
             open(newunit=ir, file=eri_f, status='old', form='formatted')
 
+            call init_ioff()
+
             do
                 read(ir, *, iostat=ios) ibasis, jbasis, abasis, bbasis, intgrl
                 ! If EOF reached
@@ -153,6 +161,15 @@ module read_in_integrals
             end associate
         end subroutine init_int_store
 
+        subroutine init_ioff()
+            integer :: i
+
+            ioff(1) = 1
+                do i = 2, bignum
+                    ioff(i) = ioff(i-1) + i-1
+                end do
+        end subroutine
+
         elemental function eri_ind(i, j) result(ind)
             ! This function can be a general version for i,j,a,b, but 
             ! we can also use storage to cut down on unnecessary instructrions:
@@ -162,9 +179,9 @@ module read_in_integrals
             integer :: ind
 
             if (i >= j) then
-                ind = i*(i-1)/2 + j
+                ind = ioff(i) + j-1
             else
-                ind = j*(j-1)/2 + i
+                ind = ioff(j) + i-1
             end if
 
         end function eri_ind
