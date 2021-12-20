@@ -7,7 +7,7 @@ module hf
       subroutine do_hartree_fock(sys, int_store)
          use error_handling
          use system
-         use read_in_integrals
+         use integrals
          use linalg
 
          type(int_store_t), intent(in) :: int_store
@@ -40,7 +40,9 @@ module hf
 
          ! S^(-1/2) = C * L^(-1/2) * C^(T)
          call diagonalise(ovlp)
+         !call zero_mat(ovlp%A)
          call build_ortmat(ovlp, ortmat)
+         !call zero_mat(ortmat)
 
          call deallocate_mat_t(ovlp)
 
@@ -50,14 +52,17 @@ module hf
 
          do iter = 1, maxiter
             fockmat%ao_ort = matmul(transpose(ortmat), matmul(fockmat%ao, ortmat))
+            !call zero_mat(fockmat%ao_ort)
 
             call diagonalise(fockmat)
 
             ! Transform coefficient into nonorthogonal AO basis
             fockmat%A = transpose(matmul(ortmat, fockmat%A))
+            !call zero_mat(fockmat%A)
 
             ! [TODO]: this is just hard-coded for now for water, URGENT: add geom_read_in
             call build_density(fockmat%A, density, 5)
+            !call zero_mat(density)
 
             call update_scf_energy(density, fockmat%ao, st, int_store, conv)
             if (conv) then
@@ -78,6 +83,7 @@ module hf
             end if
 
             call build_fock(sys, density, fockmat%ao, int_store)
+            !call zero_mat(fockmat%ao)
          end do
 
          if (.not. conv) then
@@ -102,11 +108,12 @@ module hf
          mat%A = mat%ao_ort
          call eigs(mat, ierr)
          if (ierr /= 0) call error('hf::diagonalise', 'Diagonalisation failed!')
+         !call zero_mat(mat%A)
 
       end subroutine diagonalise
 
       subroutine init_mat_t(matrix, mat)
-         use read_in_integrals
+         use integrals
          use linalg, only: mat_t
          use system
         
@@ -173,7 +180,7 @@ module hf
       subroutine update_scf_energy(density, fock, st, int_store, conv)
          
          use system, only: state_t
-         use read_in_integrals, only: int_store_t
+         use integrals, only: int_store_t
 
          real(p), intent(in) :: density(:,:)
          real(p), intent(in) :: fock(:,:)
@@ -193,7 +200,7 @@ module hf
          
       subroutine build_fock(sys, density, fock, int_store)
 
-         use read_in_integrals, only: int_store_t, eri_ind
+         use integrals, only: int_store_t, eri_ind
          use system, only: system_t
 
          real(p), intent(in) :: density(:,:)

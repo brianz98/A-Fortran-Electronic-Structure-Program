@@ -7,7 +7,7 @@ module mp2
    contains
       subroutine do_mp2_naive(sys, int_store)
          use system, only: system_t
-         use read_in_integrals, only: int_store_t, eri_ind
+         use integrals, only: int_store_t, eri_ind
 
          type(system_t), intent(inout) :: sys
          type(int_store_t), intent(inout) :: int_store
@@ -81,7 +81,7 @@ module mp2
       subroutine do_mp2(sys, int_store)
 
          use system, only: system_t
-         use read_in_integrals, only: int_store_t, eri_ind
+         use integrals, only: int_store_t, eri_ind
 
          type(system_t), intent(inout) :: sys
          type(int_store_t), intent(inout) :: int_store
@@ -92,7 +92,7 @@ module mp2
          integer :: i, j, k, l, p, q, r, s, a, b
          integer :: kl, ij, pq, rs, pqrs, s_up
          integer :: ia, ja, jb, ib
-         integer :: iunit = 6
+         integer, parameter :: iunit = 6
 
          n = sys%nbasis
          tmpdim = n*(n+1)/2
@@ -193,6 +193,8 @@ module mp2
             end do
          end do
          end associate
+
+         deallocate(tmp_a, tmp_b)
 
          write(iunit, '(1X, A)') 'Calculating MP2 energy...'
          nocc = sys%nel/2

@@ -8,7 +8,7 @@ module geometry
         subroutine read_geometry_in(sys, int_store)
             ! Read in geometry data supplied in a file
             use system, only: system_t
-            use read_in_integrals, only: int_store_t
+            use integrals, only: int_store_t
 
             type(system_t), intent(inout) :: sys
             type(int_store_t), intent(inout) :: int_store

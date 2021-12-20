@@ -34,4 +34,13 @@ module linalg
             deallocate(work)
          end do
       end subroutine eigs
+
+      elemental subroutine zero_mat(matel)
+         ! Zero out entries smaller than machine precision
+
+         real(p), intent(inout) :: matel
+
+         if (abs(matel)<depsilon) matel = 0.0_p
+      end subroutine zero_mat
+      
 end module linalg

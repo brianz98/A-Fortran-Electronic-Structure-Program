@@ -1,7 +1,7 @@
 program main
 
     use const
-    use read_in_integrals, only: read_integrals_in, print_sys_info, int_store_t
+    use integrals, only: read_integrals_in, print_sys_info, int_store_t
     use system, only: system_t
     use hf, only: do_hartree_fock
     use geometry, only: read_geometry_in

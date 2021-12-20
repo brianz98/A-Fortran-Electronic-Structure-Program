@@ -1,4 +1,4 @@
-module read_in_integrals
+module integrals
     use const
 
     implicit none
@@ -18,6 +18,7 @@ module read_in_integrals
         ! Too big, we compress with symmetry
         real(p), allocatable :: eri(:)
         real(p), allocatable :: eri_mo(:)
+        real(p), allocatable :: asym_spinorb(:,:,:,:)
     end type int_store_t
     
     contains
@@ -204,4 +205,4 @@ module read_in_integrals
 
         end subroutine print_sys_info
 
-end module read_in_integrals
+end module integrals
