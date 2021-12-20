@@ -8,6 +8,7 @@ module system
       integer :: nel = 0
       integer :: nbasis = 0
       integer :: natoms = 0
+      integer :: nocc = 0
       integer, allocatable :: charges(:)
       real(p), allocatable :: coords(:,:)
 

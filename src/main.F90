@@ -6,6 +6,7 @@ program main
     use hf, only: do_hartree_fock
     use geometry, only: read_geometry_in
     use mp2, only: do_mp2
+    use ccsd, only: do_ccsd
 
     implicit none
 
@@ -46,6 +47,12 @@ program main
     call system_clock(t1)
     if (t1<t0) t1 = t1+count_max
     write(iunit, '(1X, A, 1X, F7.5, A)') 'Time taken for MP2:', real(t1-t0)/count_rate, "s"
+    t0=t1
+
+    call do_ccsd(sys, int_store)
+    call system_clock(t1)
+    if (t1<t0) t1 = t1+count_max
+    write(iunit, '(1X, A, 1X, F7.5, A)') 'Time taken for CCSD:', real(t1-t0)/count_rate, "s"
     t0=t1
 
     write(iunit, '(1X, 64("="))')

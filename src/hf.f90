@@ -60,8 +60,7 @@ module hf
             fockmat%A = transpose(matmul(ortmat, fockmat%A))
             !call zero_mat(fockmat%A)
 
-            ! [TODO]: this is just hard-coded for now for water, URGENT: add geom_read_in
-            call build_density(fockmat%A, density, 5)
+            call build_density(fockmat%A, density, sys%nel/2)
             !call zero_mat(density)
 
             call update_scf_energy(density, fockmat%ao, st, int_store, conv)

@@ -4,6 +4,12 @@ module ccsd
 
    implicit none
 
+   type cc_amp_t
+      real(p), allocatable :: diag(:)
+      real(p), allocatable :: t_ia(:,:)
+      real(p), allocatable :: t_ijab(:,:,:,:)
+   end type cc_amp_t
+   
    contains
 
       subroutine do_ccsd(sys, int_store)
@@ -12,9 +18,10 @@ module ccsd
 
          type(system_t), intent(in) :: sys
          type(int_store_t), intent(inout) :: int_store
-         integer :: p, q, r, s
+         integer :: i, p, q, r, s
          integer :: pr, qr, pa, pb, qa, qb, ra, rb, sa, sb
-         real(dp) :: a, b
+         real(dp) :: a, b, e_mp2
+         type(cc_amp_t) :: cc_amp
          integer, parameter :: iunit = 6
 
          write(iunit, '(1X, 10("-"))')
@@ -76,9 +83,9 @@ module ccsd
          !end associate
          !end if
 
+         allocate(int_store%asym_spinorb(sys%nbasis*2,sys%nbasis*2,sys%nbasis*2,sys%nbasis*2), source=0.0_dp)
          associate(n=>sys%nbasis, asym=>int_store%asym_spinorb, eri=>int_store%eri_mo)
          ! [TODO]: this isn't necessary but easier for debugging, change to spin lookup arrays or something similar
-         allocate(int_store%asym_spinorb(n*2,n*2,n*2,n*2), source=0.0_dp)
          do p = 1, n
             pa = 2*p-1
             pb = pa+1
@@ -111,6 +118,29 @@ module ccsd
             end do
          end do
          end associate
+
+         allocate(cc_amp%diag(2*sys%nbasis))
+         do i = 1, sys%nbasis
+            cc_amp%diag(2*i-1:2*i) = sys%canon_levels(i)
+         end do
+
+         allocate(cc_amp%t_ijab(2*sys%nbasis,2*sys%nbasis,2*sys%nbasis,2*sys%nbasis), source=0.0_dp)
+         associate(doubles=>cc_amp%t_ijab, nocc=>sys%nocc, n=>sys%nbasis, asym=>int_store%asym_spinorb, e=>cc_amp%diag)
+         e_mp2 = 0.0_dp
+         do p = 1, 2*nocc
+            do q = 1, 2*nocc
+               do r = 2*nocc+1, 2*n
+                  do s = 2*nocc+1, 2*n
+                     doubles(p,q,r,s) = asym(p,q,r,s)/(e(p)+e(q)-e(r)-e(s))
+                     e_mp2 = e_mp2 + doubles(p,q,r,s)*asym(p,q,r,s)
+                  end do
+               end do
+            end do
+         end do
+         print*, e_mp2/4
+         end associate
+
+
 
       end subroutine do_ccsd
 
