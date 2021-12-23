@@ -130,6 +130,10 @@ module ccsd
          call check_allocate('F_oo', 4*nocc**2, ierr)
          allocate(F_ov(2*nocc,2*nocc+1:2*n), source=0.0_dp, stat=ierr)
          call check_allocate('F_ov', 4*nocc*(n-nocc), ierr)
+         allocate(W_oooo(2*nocc,2*nocc,2*nocc,2*nocc), source=0.0_dp, stat=ierr)
+         call check_allocate('W_oooo', 16*nocc**4, ierr)
+         allocate(W_ovvo(2*nocc,2*nocc+1:2*n,2*nocc+1:2*n,2*nocc), source=0.0_dp, stat=ierr)
+         call check_allocate('W_ovvo', 16*nocc**2*(n-nocc)**2, ierr)
          end associate
 
       end subroutine do_ccsd
@@ -211,5 +215,57 @@ module ccsd
          end do
          end associate
       end subroutine build_F
+
+      subroutine build_W(sys, W_oooo, W_ovvo, cc_amp, asym, tau)
+         ! Eqs. 6 and 8
+         type(system_t), intent(in) :: sys
+         type(cc_amp_t), intent(in) :: cc_amp
+         real(p), intent(in) :: asym(:,:,:,:)
+         real(p), intent(in) :: tau(:,:,:,:)
+         real(p), intent(out) :: W_oooo(:,:,:,:), W_ovvo(:,:,:,:)
+
+         integer :: m, n, i, j, e, f, b
+         real(p) :: x
+
+         associate(nbasis=>sys%nbasis, nocc=>sys%nocc, t_ia=>cc_amp%t_ia, t_ijab=>cc_amp%t_ijab)
+         do m = 1, 2*nocc
+            do n = 1, 2*nocc
+               do i = 1, 2*nocc
+                  do j = 1, 2*nocc
+                     W_oooo(m,n,i,j) = asym(m,n,i,j)
+                     do e = 2*nocc+1, 2*nbasis
+                        W_oooo(m,n,i,j) = W_oooo(m,n,i,j) + t_ia(j,e)*asym(m,n,i,e) - t_ia(i,e)*asym(m,n,j,e)
+                        do f = 2*nocc+1, 2*nbasis
+                           W_oooo(m,n,i,j) = W_oooo(m,n,i,j) + 0.5*t_ijab(i,j,e,f)*asym(m,n,e,f)
+                        end do
+                     end do
+                  end do
+               end do
+            end do
+         end do
+
+         do m = 1, 2*nocc
+            do b = 2*nocc+1, 2*nbasis
+               do e = 2*nocc+1, 2*nbasis
+                  do j = 1, 2*nocc
+                     W_ovvo(m,b,e,j) = asym(m,b,e,j)
+                     do f = 2*nocc+1, 2*nbasis
+                        W_ovvo(m,b,e,j) = W_ovvo(m,b,e,j) + t_ia(j,f)*asym(m,b,e,f)
+                     end do
+
+                     do n = 1, 2*nbasis
+                        x = t_ia(n,b)
+                        W_ovvo(m,b,e,j) = W_ovvo(m,b,e,j) - x*asym(m,n,e,j)
+                        do f = 2*nocc+1, 2*nbasis
+                           W_ovvo(m,b,e,j) = W_ovvo(m,b,e,j) - (0.5*t_ijab(j,n,f,b) + x*t_ia(j,f)) * asym(m,n,e,f)
+                        end do
+                     end do
+                  end do
+               end do
+            end do
+         end do
+
+         end associate
+      end subroutine build_W
 
 end module ccsd
