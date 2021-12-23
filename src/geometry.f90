@@ -37,6 +37,7 @@ module geometry
 
             sys%nel = sum(sys%charges)
             sys%nocc = sys%nel/2
+            sys%nvirt = sys%nbasis - sys%nocc
 
             call get_e_nuc(sys, int_store%e_nuc)
 
