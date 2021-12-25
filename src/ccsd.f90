@@ -98,12 +98,11 @@ module ccsd
          associate(nbasis=>sys%nbasis, nocc=>sys%nocc, t_ia=>cc_amp%t_ia, t_ijab=>cc_amp%t_ijab, asym=>int_store%asym_spinorb)
          do iter = 1, maxiter
             ! Update intermediate tensors
+            call update_cc_energy(sys, st, int_store, cc_amp)
             call build_tau(sys, cc_amp, cc_int)
             call build_F(sys, cc_int, cc_amp, asym)
             call build_W(sys, cc_int, cc_amp, asym)
-
             call update_amplitudes(sys, cc_amp, int_store, cc_int)
-            call update_cc_energy(sys, st, int_store, cc_amp)
             print*, st%energy        
          end do
          end associate
@@ -220,7 +219,7 @@ module ccsd
                end do
             end do
          end do
-         t1 = tmp_t1/D_ia
+         tmp_t1 = tmp_t1/D_ia
 
          ! Update T2
          tmp_t2 = 0.0_dp
@@ -231,26 +230,25 @@ module ccsd
                      tmp_t2(i,j,a,b) = asym(i,j,a,b)
                      do e = 2*nocc+1, 2*nbasis
                         tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) + t2(i,j,a,e)*F_vv(b,e) - t2(i,j,b,e)*F_vv(a,e) &
-                        + t1(i,e)*asym(a,b,e,j) - t1(j,e)*asym(a,b,e,i)
+                        + tmp_t1(i,e)*asym(a,b,e,j) - tmp_t1(j,e)*asym(a,b,e,i)
                         do m = 1, 2*nocc
-                           tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) - 0.5*F_ov(m,e)*(t2(i,j,a,e)*t1(m,b)-&
-                              t2(i,j,b,e)*t1(m,a))
+                           tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) - 0.5*F_ov(m,e)*(t2(i,j,a,e)*tmp_t1(m,b)-&
+                              t2(i,j,b,e)*tmp_t1(m,a))
                         end do
                         do f = 2*nocc+1, 2*nbasis
-                           W_abef = 0.0_dp
                            W_abef = asym(a,b,e,f)
                            do n = 1, 2*nocc
-                              W_abef = W_abef + t1(n,b)*asym(a,n,e,f) - t1(n,a)*asym(b,n,e,f)
+                              W_abef = W_abef - tmp_t1(n,b)*asym(a,n,e,f) + tmp_t1(n,a)*asym(b,n,e,f)
                            end do
                            tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) + 0.5*tau(i,j,e,f)*W_abef
                         end do
                      end do
                      do m = 1, 2*nocc
                         tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) - t2(i,m,a,b)*F_oo(m,j) + t2(j,m,a,b)*F_oo(m,i) &
-                        - t1(m,a)*asym(m,b,i,j) + t1(m,b)*asym(m,a,i,j)
+                        - tmp_t1(m,a)*asym(m,b,i,j) + tmp_t1(m,b)*asym(m,a,i,j)
                         do e = 2*nocc+1, 2*nbasis
-                           tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) - 0.5*F_ov(m,e)*(t2(i,m,a,b)*t1(j,e)-&
-                              t2(j,m,a,b)*t1(i,e))
+                           tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) - 0.5*F_ov(m,e)*(t2(i,m,a,b)*tmp_t1(j,e)-&
+                              t2(j,m,a,b)*tmp_t1(i,e))
                         end do
                         do n = 1, 2*nocc
                            tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) + 0.5*tau(m,n,a,b)*W_oooo(m,n,i,j)
@@ -260,16 +258,17 @@ module ccsd
                      do m = 1, 2*nocc
                         do e = 2*nocc+1, 2*nbasis
                            tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) &
-                           + t2(i,m,a,e)*W_ovvo(m,b,e,j) - t1(i,e)*t1(m,a)*asym(m,b,e,j)&
-                           - t2(j,m,a,e)*W_ovvo(m,b,e,i) - t1(j,e)*t1(m,a)*asym(m,b,e,i)&
-                           - t2(i,m,b,e)*W_ovvo(m,a,e,j) - t1(i,e)*t1(m,b)*asym(m,a,e,j)&
-                           + t2(j,m,b,e)*W_ovvo(m,a,e,i) - t1(j,e)*t1(m,b)*asym(m,a,e,i)
+                           + t2(i,m,a,e)*W_ovvo(m,b,e,j) - tmp_t1(i,e)*tmp_t1(m,a)*asym(m,b,e,j)&
+                           - t2(j,m,a,e)*W_ovvo(m,b,e,i) + tmp_t1(j,e)*tmp_t1(m,a)*asym(m,b,e,i)&
+                           - t2(i,m,b,e)*W_ovvo(m,a,e,j) + tmp_t1(i,e)*tmp_t1(m,b)*asym(m,a,e,j)&
+                           + t2(j,m,b,e)*W_ovvo(m,a,e,i) - tmp_t1(j,e)*tmp_t1(m,b)*asym(m,a,e,i)
                         end do 
                      end do
                   end do
                end do
             end do
          end do
+         t1 = tmp_t1
          t2 = tmp_t2/D_ijab
          end associate
 
@@ -312,6 +311,8 @@ module ccsd
 
          associate(n=>sys%nbasis, nocc=>sys%nocc, t_ia=>cc_amp%t_ia, t_ijab=>cc_amp%t_ijab,&
             tau=>cc_int%tau, tau_tilde=>cc_int%tau_tilde)
+            tau = 0.0_p
+            tau_tilde = 0.0_p
             do i = 1, 2*nocc
                do a = 2*nocc+1, 2*n
                   ia = t_ia(i,a)
@@ -340,6 +341,9 @@ module ccsd
          associate(nbasis=>sys%nbasis, nocc=>sys%nocc, t_ia=>cc_amp%t_ia, t_ijab=>cc_amp%t_ijab,&
             F_vv=>cc_int%F_vv, F_oo=>cc_int%F_oo, F_ov=>cc_int%F_ov, tau_tilde=>cc_int%tau_tilde)
          ! F_ae = \sum_{mf} t_m^f * <ma||fe> - 0.5 \sum_{mnf} \tau~_{mn}^{af} <mn||ef>
+         F_vv = 0.0_p
+         F_oo = 0.0_p
+         F_ov = 0.0_p
          do a = 2*nocc+1, 2*nbasis
             do e = 2*nocc+1, 2*nbasis
                do m = 1, 2*nocc
@@ -391,6 +395,8 @@ module ccsd
 
          associate(nbasis=>sys%nbasis, nocc=>sys%nocc, t_ia=>cc_amp%t_ia, t_ijab=>cc_amp%t_ijab,&
             W_oooo=>cc_int%W_oooo, W_ovvo=>cc_int%W_ovvo, tau=>cc_int%tau)
+         W_oooo = 0.0_p
+         W_ovvo = 0.0_p
          do m = 1, 2*nocc
             do n = 1, 2*nocc
                do i = 1, 2*nocc
