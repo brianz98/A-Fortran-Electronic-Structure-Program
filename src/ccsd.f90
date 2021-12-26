@@ -212,7 +212,7 @@ module ccsd
          !$omp master
          tmp_t1 = 0.0_dp
          !$omp end master
-         !$omp do schedule(dynamic, 2) collapse(3)
+         !$omp do schedule(dynamic, 2) collapse(2)
          do i = 1, 2*nocc
             do a = 2*nocc+1, 2*nbasis
                do m = 1, 2*nocc
@@ -378,7 +378,7 @@ module ccsd
          !$omp private(a, e, f, m, n, i) &
          !$omp shared(sys, cc_int, cc_amp, asym)
 
-         !$omp do schedule(dynamic, 2) collapse(4)
+         !$omp do schedule(dynamic, 2) collapse(2)
          do a = 2*nocc+1, 2*nbasis
             do e = 2*nocc+1, 2*nbasis
                do m = 1, 2*nocc
@@ -394,7 +394,7 @@ module ccsd
          !$omp end do
 
          ! F_mi = \sum_{en} t_n^e <mn||ie> + 0.5 \sum_{nef} \tau~_{in}^{ef} <mn||ef>
-         !$omp do schedule(dynamic, 2) collapse(4)
+         !$omp do schedule(dynamic, 2) collapse(2)
          do m = 1, 2*nocc
             do i = 1, 2*nocc
                do e = 2*nocc+1, 2*nbasis
@@ -410,7 +410,7 @@ module ccsd
          !$omp end do
 
          ! F_me = \sum_{nf} t_n^f * <mn||ef>
-         !$omp do schedule(dynamic, 2) collapse(4)
+         !$omp do schedule(dynamic, 2) collapse(2)
          do m = 1, 2*nocc
             do e = 2*nocc+1, 2*nbasis
                do n = 1, 2*nocc
