@@ -7,11 +7,11 @@ project (els)
 enable_language (Fortran)
 
 if (CMAKE_Fortran_COMPILER_ID MATCHES "GNU")
-    set (dialect "-ffree-form -std=f2008 -fimplicit-none")
+    set (dialect "-ffree-form -std=f2008 -fimplicit-none -fopenmp")
     set (extras "-fcheck=all -ggdb")
 endif ()
 if (CMAKE_Fortran_COMPILER_ID MATCHES "Intel")
-    set (dialect "-stand f08 -free -implicitnone")
+    set (dialect "-stand f08 -free -implicitnone -qopenmp")
     set (extras "-check bounds")
 endif ()
 
