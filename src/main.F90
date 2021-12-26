@@ -1,6 +1,7 @@
 program main
 
     use const
+    use omp_lib
     use integrals, only: read_integrals_in, print_sys_info, int_store_t
     use system, only: system_t
     use hf, only: do_hartree_fock
@@ -62,13 +63,12 @@ program main
     write(iunit, '(1X, A, 1X, F12.7)') 'E_CCSD:                 ', sys%e_ccsd
     write(iunit, '(1X, A, 1X, F12.7)') 'E_CCSD(T):              ', sys%e_ccsd_t
     write(iunit, '(1X, 40("-"))')
-    write(iunit, '(1X, A, 1X, F12.7)') 'Total electronic energy:', sys%e_hf+sys%e_mp2+sys%e_ccsd+sys%e_ccsd_t
-    write(iunit, '(1X, A, 1X, F12.7)') 'Total energy:           ', sys%e_hf+sys%e_mp2+sys%e_ccsd+sys%e_ccsd_t + int_store%e_nuc
+    write(iunit, '(1X, A, 1X, F12.7)') 'Total electronic energy:', sys%e_hf+sys%e_ccsd+sys%e_ccsd_t
+    write(iunit, '(1X, A, 1X, F12.7)') 'Total energy:           ', sys%e_hf+sys%e_ccsd+sys%e_ccsd_t + int_store%e_nuc
 
     call date_and_time(VALUES=date_values)
     write(iunit, '(1X, 64("="))')
     write(iunit, '(1X, A, 1X, I2.2, "/", I2.2, "/", I4.4, 1X, A, 1X, I2.2, 2(":", I2.2))') &
                 "Finished running on", date_values(3:1:-1), "at", date_values(5:7)
-
-    
+   
 end program main

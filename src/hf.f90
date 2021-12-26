@@ -211,6 +211,10 @@ module hf
          integer :: ij, kl, ik, jl
 
          associate(eri=>int_store%eri)
+            !$omp parallel do default(none) &
+            !$omp schedule(dynamic, 2) collapse(2) &
+            !$omp private(ij, jl, kl, ik) &
+            !$omp shared(sys, density, fock, int_store)
             do j = 1, sys%nbasis
                do i = 1, sys%nbasis
                   fock(i,j) = int_store%core_hamil(i,j)
@@ -226,6 +230,7 @@ module hf
                   end do
                end do
             end do
+            !$omp end parallel do
          end associate
 
       end subroutine build_fock

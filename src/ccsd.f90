@@ -33,7 +33,7 @@ module ccsd
          use error_handling, only: check_allocate
          use system, only: state_t
 
-         type(system_t), intent(in) :: sys
+         type(system_t), intent(inout) :: sys
          type(int_store_t), intent(inout) :: int_store
          integer :: i, j, a, b, p, q, r, s
          integer :: pr, qr, pa, pb, qa, qb, ra, rb, sa, sb
@@ -95,17 +95,21 @@ module ccsd
 
          call init_cc(sys, int_store, cc_amp, cc_int)
 
+         write(iunit, '(1X, A)') 'Initialisation done, now entering iterative CC solver...'
+
          associate(nbasis=>sys%nbasis, nocc=>sys%nocc, t_ia=>cc_amp%t_ia, t_ijab=>cc_amp%t_ijab, asym=>int_store%asym_spinorb)
          do iter = 1, maxiter
             ! Update intermediate tensors
             call update_cc_energy(sys, st, int_store, cc_amp)
+            write(iunit, '(1X, A, 1X, I3, 1X, F15.8)') 'Iteration', iter, st%energy 
             call build_tau(sys, cc_amp, cc_int)
             call build_F(sys, cc_int, cc_amp, asym)
             call build_W(sys, cc_int, cc_amp, asym)
-            call update_amplitudes(sys, cc_amp, int_store, cc_int)
-            print*, st%energy        
+            call update_amplitudes(sys, cc_amp, int_store, cc_int)        
          end do
          end associate
+
+         sys%e_ccsd = st%energy
 
       end subroutine do_ccsd
 
@@ -119,7 +123,9 @@ module ccsd
          type(cc_int_t), intent(inout) :: cc_int
 
          integer :: p, q, r, s, i, j, a, b, ierr
+         integer, parameter :: iunit = 6
 
+         write(iunit, '(1X, A)') 'Forming energy denominator matrices...'
          ! Forming the energy denominator matrices
          associate(n=>sys%nbasis, nocc=>sys%nocc, e=>sys%canon_levels)
          allocate(cc_int%D_ia(2*nocc, 2*nocc+1:2*n), source=0.0_dp, stat=ierr)
@@ -137,6 +143,7 @@ module ccsd
             end do
          end do
 
+         write(iunit, '(1X, A)') 'Allocating amplitude tensors...'
          ! Initialise t_i^a=0 and t_{ij}^{ab}=MP1 WF
          allocate(cc_amp%t_ijab(2*nocc,2*nocc,2*nocc+1:2*n,2*nocc+1:2*n), source=0.0_dp, stat=ierr)
          call check_allocate('cc_amp%t_ijab', 16*(nocc**2*(n-nocc)**2), ierr)
@@ -148,6 +155,7 @@ module ccsd
          call check_allocate('cc_int%tmp_tia', 4*nocc*(n-nocc), ierr)
          end associate
 
+         write(iunit, '(1X, A)') 'Forming initial amplitude guesses...'
          associate(doubles=>cc_amp%t_ijab, nocc=>sys%nocc, asym=>int_store%asym_spinorb)
          do p = 1, 2*nocc
             do q = 1, 2*nocc
@@ -160,6 +168,7 @@ module ccsd
          end do
          end associate
 
+         write(iunit, '(1X, A)') 'Allocating intermediate tensors...'
          ! Allocate the intermediate tensors
          associate(n=>sys%nbasis, nocc=>sys%nocc)
          allocate(cc_int%F_vv(2*nocc+1:2*n,2*nocc+1:2*n), source=0.0_dp, stat=ierr)
