@@ -205,7 +205,14 @@ module ccsd
             W_ovvo=>cc_int%W_ovvo,tau=>cc_int%tau,tau_tilde=>cc_int%tau_tilde,nocc=>sys%nocc,nbasis=>sys%nbasis)
 
          ! Update T1
+         !$omp parallel default(none) &
+         !$omp private(i, j, a, b, m, n, e, f, W_abef) &
+         !$omp shared(sys, cc_amp, int_store, cc_int)
+
+         !$omp master
          tmp_t1 = 0.0_dp
+         !$omp end master
+         !$omp do schedule(dynamic, 2) collapse(3)
          do i = 1, 2*nocc
             do a = 2*nocc+1, 2*nbasis
                do m = 1, 2*nocc
@@ -228,10 +235,16 @@ module ccsd
                end do
             end do
          end do
-         tmp_t1 = tmp_t1/D_ia
+         !$omp end do
 
+         !$omp master
+         tmp_t1 = tmp_t1/D_ia
+         
          ! Update T2
          tmp_t2 = 0.0_dp
+         !$omp end master
+
+         !$omp do schedule(dynamic, 2) collapse(4)
          do i = 1, 2*nocc
             do j = 1, 2*nocc
                do a = 2*nocc+1, 2*nbasis
@@ -277,6 +290,8 @@ module ccsd
                end do
             end do
          end do
+         !$omp end do
+         !$omp end parallel
          t1 = tmp_t1
          t2 = tmp_t2/D_ijab
          end associate
@@ -322,6 +337,10 @@ module ccsd
             tau=>cc_int%tau, tau_tilde=>cc_int%tau_tilde)
             tau = 0.0_p
             tau_tilde = 0.0_p
+            !$omp parallel do default(none) &
+            !$omp private(i,j,a,b,ia,ja,x) &
+            !$omp shared(sys, cc_amp, cc_int) &
+            !$omp schedule(dynamic, 2) collapse(2)
             do i = 1, 2*nocc
                do a = 2*nocc+1, 2*n
                   ia = t_ia(i,a)
@@ -335,6 +354,7 @@ module ccsd
                   end do
                end do
             end do
+            !$omp end parallel do
          end associate
 
       end subroutine build_tau
@@ -353,6 +373,12 @@ module ccsd
          F_vv = 0.0_p
          F_oo = 0.0_p
          F_ov = 0.0_p
+
+         !$omp parallel default(none) &
+         !$omp private(a, e, f, m, n, i) &
+         !$omp shared(sys, cc_int, cc_amp, asym)
+
+         !$omp do schedule(dynamic, 2) collapse(4)
          do a = 2*nocc+1, 2*nbasis
             do e = 2*nocc+1, 2*nbasis
                do m = 1, 2*nocc
@@ -365,8 +391,10 @@ module ccsd
                end do
             end do
          end do
+         !$omp end do
 
          ! F_mi = \sum_{en} t_n^e <mn||ie> + 0.5 \sum_{nef} \tau~_{in}^{ef} <mn||ef>
+         !$omp do schedule(dynamic, 2) collapse(4)
          do m = 1, 2*nocc
             do i = 1, 2*nocc
                do e = 2*nocc+1, 2*nbasis
@@ -379,8 +407,10 @@ module ccsd
                end do
             end do
          end do
+         !$omp end do
 
          ! F_me = \sum_{nf} t_n^f * <mn||ef>
+         !$omp do schedule(dynamic, 2) collapse(4)
          do m = 1, 2*nocc
             do e = 2*nocc+1, 2*nbasis
                do n = 1, 2*nocc
@@ -390,6 +420,8 @@ module ccsd
                end do
             end do
          end do
+         !$omp end do
+         !$omp end parallel
          end associate
       end subroutine build_F
 
@@ -406,6 +438,11 @@ module ccsd
             W_oooo=>cc_int%W_oooo, W_ovvo=>cc_int%W_ovvo, tau=>cc_int%tau)
          W_oooo = 0.0_p
          W_ovvo = 0.0_p
+         !$omp parallel default(none) &
+         !$omp private(m, n, i, j, e, f, b, x) &
+         !$omp shared(sys, cc_int, cc_amp, asym)
+
+         !$omp do schedule(dynamic, 2) collapse(4)
          do m = 1, 2*nocc
             do n = 1, 2*nocc
                do i = 1, 2*nocc
@@ -421,7 +458,9 @@ module ccsd
                end do
             end do
          end do
+         !$omp end do
 
+         !$omp do schedule(dynamic, 2) collapse(4)
          do m = 1, 2*nocc
             do b = 2*nocc+1, 2*nbasis
                do e = 2*nocc+1, 2*nbasis
@@ -442,6 +481,8 @@ module ccsd
                end do
             end do
          end do
+         !$omp end do
+         !$omp end parallel
 
          end associate
       end subroutine build_W
