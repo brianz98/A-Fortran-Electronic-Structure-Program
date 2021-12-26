@@ -9,10 +9,11 @@ The end goal of this project will be performing HF, MP2, CCSD, and CCSD(T), as p
 - [x] Hartree-Fock without symmetry
 - [x] Pretty printing, time reporting
 - [x] MP2 without symmetry
-- [ ] CCSD without symmetry
+- [X] CCSD without symmetry
+- [X] OpenMP parallelisation
 - [ ] Adapting Hartree-Fock with symmetry
 - [ ] Ditto for MP2
 - [ ] Ditto for CCSD
 - [ ] CCSD(T) with symmetry
-- [ ] OpenMP / MPI parallelisation
+- [ ] MPI parallelisation
 - [ ] GPU adaptation for MP2 and CCSD/(T)
