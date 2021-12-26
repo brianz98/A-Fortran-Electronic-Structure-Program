@@ -108,7 +108,12 @@ module mp2
 
          allocate(int_store%eri_mo, mold=int_store%eri)
 
+         
+         !$omp parallel default(none) &
+         !$omp private(kl, ij, pq, rs, pqrs, s_up, ia, ja, jb, ib) &
+         !$omp shared(sys, int_store, tmp_a, tmp_b, nocc, n)
          associate(C=>sys%canon_coeff, eri_mo=>int_store%eri_mo, eri=>int_store%eri)
+         !$omp do schedule(dynamic, 2) collapse(2)
          ! (ij|kl) -> (pj|kl)
          do k = 1, n
             do l = 1, n
@@ -123,7 +128,9 @@ module mp2
                end do
             end do
          end do
+         !$omp end do
 
+         !$omp do schedule(dynamic, 2) collapse(2)
          ! (pj|kl) -> (pq|kl)
          do k = 1, n
             do l = 1, n
@@ -137,10 +144,14 @@ module mp2
                end do
             end do
          end do
+         !$omp end do
 
          ! (pq|kl) -> (pq|rl)
+         !$omp master
          tmp_a(:,:,:,:) = 0.0_dp
-         pq = 0
+         !$omp end master
+
+         !$omp do schedule(dynamic, 2) collapse(2)
          do p = 1, n
             do q = 1, n
                pq = eri_ind(p,q)
@@ -154,10 +165,13 @@ module mp2
                end do
             end do
          end do
+         !$omp end do
 
          ! (pq|rl) -> (pq|rs)
+         !$omp master
          tmp_b(:,:,:,:) = 0.0_dp
-         pq = 0
+         !$omp end master
+         !$omp do schedule(dynamic, 2) collapse(2)
          do p = 1, n
             do q = 1, n
                pq = eri_ind(p,q)
@@ -171,7 +185,9 @@ module mp2
                end do
             end do
          end do
+         !$omp end do
 
+         !$omp master
          pq = 0
          pqrs = 0
          do p = 1, n
@@ -192,13 +208,17 @@ module mp2
                end do
             end do
          end do
+         !$omp end master
          end associate
+         !$omp end parallel
+
 
          deallocate(tmp_a, tmp_b)
-
          write(iunit, '(1X, A)') 'Calculating MP2 energy...'
+
          nocc = sys%nel/2
          associate(e=>sys%canon_levels, eri=>int_store%eri_mo, emp=>sys%e_mp2)
+         emp = 0.0_dp
          do i = 1, nocc
             do j = 1, nocc
                do a = nocc+1, n
@@ -214,6 +234,8 @@ module mp2
             end do
          end do
          end associate
+         
+
          write(iunit, '(1X, A, 1X, F15.8)') 'MP2 correlation energy (Hartree):', sys%e_mp2
 
       end subroutine do_mp2
