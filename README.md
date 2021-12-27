@@ -15,7 +15,6 @@ The end goal of this project will be performing HF, MP2, CCSD, and CCSD(T), as p
 - [ ] DIIS acceleration for CCSD iterations
 - [ ] Loop optimisations (fusing triangular loops, cache optimisations)
 - [ ] CCSD(T) without symmetry
-- [ ] Looping optimisation / fusing trian
 - [ ] Adapting Hartree-Fock with symmetry
 - [ ] Ditto for MP2
 - [ ] Ditto for CCSD
