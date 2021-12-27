@@ -11,6 +11,8 @@ The end goal of this project will be performing HF, MP2, CCSD, and CCSD(T), as p
 - [x] MP2 without symmetry
 - [X] CCSD without symmetry
 - [X] OpenMP parallelisation
+- [X] DIIS acceleration for Hartree-Fock SCF
+- [ ] DIIS acceleration for CCSD iterations
 - [ ] Adapting Hartree-Fock with symmetry
 - [ ] Ditto for MP2
 - [ ] Ditto for CCSD
