@@ -2,7 +2,7 @@
 This project is based on the Crawford Group's excellent [C++ Programming Tutorial in Chemistry](https://github.com/CrawfordGroup/ProgrammingProjects), but written in Fortran. 
 The end goal of this project will be performing HF, MP2, CCSD, and CCSD(T), as per the original tutorial, but with additional support for multicore processors (modern CPUs, GPUs).
 
-## Progress
+## Progress / to-do
 - [x] Geometry read-in
 - [x] Integral read-in
 - [x] Nuclear repulsion energy calculation
@@ -13,9 +13,12 @@ The end goal of this project will be performing HF, MP2, CCSD, and CCSD(T), as p
 - [X] OpenMP parallelisation
 - [X] DIIS acceleration for Hartree-Fock SCF
 - [ ] DIIS acceleration for CCSD iterations
+- [ ] Loop optimisations (fusing triangular loops, cache optimisations)
+- [ ] CCSD(T) without symmetry
+- [ ] Looping optimisation / fusing trian
 - [ ] Adapting Hartree-Fock with symmetry
 - [ ] Ditto for MP2
 - [ ] Ditto for CCSD
-- [ ] CCSD(T) with symmetry
+- [ ] Ditto for CCSD(T)
 - [ ] MPI parallelisation
 - [ ] GPU adaptation for MP2 and CCSD/(T)
