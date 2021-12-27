@@ -3,6 +3,18 @@ module hf
 
    implicit none
 
+   type diis_t
+      ! Contains matrices for use in the DIIS procedure
+      integer :: n_errmat = 6
+      integer :: n_active = 0
+      integer :: iter = 0
+      real(p), allocatable :: e(:,:,:)
+      real(p), allocatable :: F(:,:,:)
+      real(p), allocatable :: B(:,:)
+      real(p), allocatable :: c(:)
+      real(p), allocatable :: rhs(:)
+   end type diis_t
+
    contains
       subroutine do_hartree_fock(sys, int_store)
          use error_handling
@@ -21,8 +33,9 @@ module hf
          real(p) :: tmpmat(sys%nbasis,sys%nbasis)
 
          type(state_t) :: st
-         integer :: iter, maxiter, iunit, i
+         integer :: iter, maxiter, iunit, i, j, ierr
          logical :: conv = .false.
+         type(diis_t) :: diis
 
          iunit = 6
          maxiter = 100
@@ -40,9 +53,7 @@ module hf
 
          ! S^(-1/2) = C * L^(-1/2) * C^(T)
          call diagonalise(ovlp)
-         !call zero_mat(ovlp%A)
          call build_ortmat(ovlp, ortmat)
-         !call zero_mat(ortmat)
 
          call deallocate_mat_t(ovlp)
 
@@ -50,18 +61,17 @@ module hf
          ! F'_0 = S^T(-1/2) * F * S^(-1/2)
          call init_mat_t(int_store%core_hamil, fockmat)
 
+         call init_diis_t(sys, diis)
+
          do iter = 1, maxiter
             fockmat%ao_ort = matmul(transpose(ortmat), matmul(fockmat%ao, ortmat))
-            !call zero_mat(fockmat%ao_ort)
 
             call diagonalise(fockmat)
 
             ! Transform coefficient into nonorthogonal AO basis
             fockmat%A = transpose(matmul(ortmat, fockmat%A))
-            !call zero_mat(fockmat%A)
 
             call build_density(fockmat%A, density, sys%nel/2)
-            !call zero_mat(density)
 
             call update_scf_energy(density, fockmat%ao, st, int_store, conv)
             if (conv) then
@@ -77,12 +87,47 @@ module hf
                allocate(sys%canon_coeff, source=fockmat%A)
                allocate(sys%canon_levels, source=fockmat%W)
                exit
-            else
-               write(iunit, '(1X, A, 1X, I3, F15.8)') 'Iteration', iter, st%energy
             end if
+            write(iunit, '(1X, A, 1X, I3, F15.8)') 'Iteration', iter, st%energy
 
             call build_fock(sys, density, fockmat%ao, int_store)
-            !call zero_mat(fockmat%ao)
+
+            ! DIIS update
+            !call update_diis(diis, fockmat%ao, density, int_store%ovlp)
+            diis%iter = diis%iter+1
+            if (diis%iter > 6) diis%iter = diis%iter - 6
+            if (diis%n_active < diis%n_errmat) diis%n_active = diis%n_active+1
+            diis%F(diis%iter,:,:) = 0.0_p
+            diis%e(diis%iter,:,:) = 0.0_p
+            diis%F(diis%iter,:,:) = fockmat%ao(:,:)
+            diis%e(diis%iter,:,:) = matmul(fockmat%ao, matmul(density,int_store%ovlp)) &
+                                  - matmul(int_store%ovlp, matmul(density, fockmat%ao))
+
+            associate(n=>diis%n_active, nerr=>diis%n_errmat)
+            if (n > 1) then
+               ! Construct the B matrix
+               if (n <= nerr) then
+                  if (allocated(diis%B)) deallocate(diis%B, diis%c, diis%rhs)
+                  allocate(diis%B(n+1,n+1), diis%c(n+1), diis%rhs(n+1), source=0.0_p)
+               end if
+               diis%B(n+1,:) = -1.0_p
+               diis%B(n+1,n+1) = 0.0_p
+               diis%rhs(n+1) = -1.0_p
+               diis%c = diis%rhs
+               do i = 1, n
+                  do j = 1, i
+                     diis%B(i,j) = sum(diis%e(i,:,:)*diis%e(j,:,:))
+                  end do
+               end do
+               call linsolve(diis%B, diis%c, ierr)
+               if (ierr /= 0) call error('hf::linsolve', 'Linear solve failed!')
+               fockmat%ao = 0.0_p
+               do i = 1, n
+                  fockmat%ao = fockmat%ao + diis%c(i) * diis%F(i,:,:)
+               end do
+            end if
+            end associate
+
          end do
 
          if (.not. conv) then
@@ -90,6 +135,18 @@ module hf
          end if
 
       end subroutine do_hartree_fock
+
+      subroutine init_diis_t(sys, diis)
+         use system, only: system_t
+
+         type(system_t), intent(in) :: sys
+         type(diis_t), intent(out) :: diis
+
+         associate(n=>sys%nbasis)
+            allocate(diis%e(diis%n_errmat,n,n), source=0.0_p)
+            allocate(diis%F(diis%n_errmat,n,n), source=0.0_p)
+         end associate
+      end subroutine init_diis_t
 
       subroutine diagonalise(mat)
          ! For a symmetric matrix A we produce

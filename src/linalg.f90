@@ -30,10 +30,30 @@ module linalg
          do i = 1, 2
             allocate(work(abs(lwork)))
             call dsyev('V', 'U', mat%N, mat%A(:,:), mat%N, mat%W, work, lwork, ierr)
-            lwork = ceiling(work(1)) ! nint used in HANDE
+            lwork = nint(work(1))
             deallocate(work)
          end do
       end subroutine eigs
+
+      subroutine linsolve(A, B, ierr)
+         real(p), intent(inout) :: A(:,:)
+         real(p), intent(inout) :: B(:)
+         integer, intent(out) :: ierr
+
+         real(p), allocatable :: work(:)
+         real(p), allocatable :: ipiv(:)
+         integer :: lwork, i
+
+         lwork = -1
+         allocate(ipiv(size(B)))
+         do i = 1, 2
+            allocate(work(abs(lwork)))
+            call dsysv('L', size(B), 1, A, size(B), ipiv, B, size(B), work, lwork, ierr)
+            lwork = nint(work(1))
+            deallocate(work)
+         end do
+
+      end subroutine linsolve
 
       elemental subroutine zero_mat(matel)
          ! Zero out entries smaller than machine precision
