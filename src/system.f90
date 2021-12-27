@@ -23,6 +23,10 @@ module system
       real(p), allocatable :: canon_coeff(:,:)
       real(p), allocatable :: canon_levels(:)
 
+      ! Converged CCSD amplitudes
+      real(p), allocatable :: t1(:,:)
+      real(p), allocatable :: t2(:,:,:,:)
+
       
 
    end type system_t
@@ -31,8 +35,8 @@ module system
       integer :: iter = 0
       real(p) :: energy = 0.0_p
       real(p) :: energy_old = 0.0_p
-      real(p), allocatable :: density(:,:)
       real(p), allocatable :: density_old(:,:)
+      real(p), allocatable :: t2_old(:,:,:,:)
    end type state_t
 
 end module system

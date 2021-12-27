@@ -234,7 +234,6 @@ module mp2
             end do
          end do
          end associate
-         
 
          write(iunit, '(1X, A, 1X, F15.8)') 'MP2 correlation energy (Hartree):', sys%e_mp2
 

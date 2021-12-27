@@ -15,7 +15,7 @@ module ccsd
       ! Curly F tensors (Eqs. 3-5)
       real(dp), allocatable :: F_oo(:,:), F_vv(:,:), F_ov(:,:)
       ! Curly W tensors (Eqs. 6,8), see Appendix for why 7 is avoided
-      real(dp), allocatable :: W_oooo(:,:,:,:), W_ovvo(:,:,:,:)
+      real(dp), allocatable :: W_oooo(:,:,:,:), W_vvvv(:,:,:,:), W_ovvo(:,:,:,:)
       ! Effective two-particle excitation operators tau and tilde tau (Eqs. 9-10)
       real(dp), allocatable :: tau_tilde(:,:,:,:), tau(:,:,:,:)
       ! Energy denominators (Eqs. 12-13)
@@ -47,6 +47,7 @@ module ccsd
          integer, parameter :: maxiter = 50
 
          type(cc_int_t) :: cc_int
+         logical :: conv
 
          write(iunit, '(1X, 10("-"))')
          write(iunit, '(1X, A)') 'CCSD'
@@ -94,22 +95,35 @@ module ccsd
          end associate
 
          call init_cc(sys, int_store, cc_amp, cc_int)
+         allocate(st%t2_old, source=cc_amp%t_ijab)
 
          write(iunit, '(1X, A)') 'Initialisation done, now entering iterative CC solver...'
 
          associate(nbasis=>sys%nbasis, nocc=>sys%nocc, t_ia=>cc_amp%t_ia, t_ijab=>cc_amp%t_ijab, asym=>int_store%asym_spinorb)
          do iter = 1, maxiter
             ! Update intermediate tensors
-            call update_cc_energy(sys, st, int_store, cc_amp)
-            write(iunit, '(1X, A, 1X, I3, 1X, F15.8)') 'Iteration', iter, st%energy 
             call build_tau(sys, cc_amp, cc_int)
             call build_F(sys, cc_int, cc_amp, asym)
             call build_W(sys, cc_int, cc_amp, asym)
+
             call update_amplitudes(sys, cc_amp, int_store, cc_int)        
+            call update_cc_energy(sys, st, int_store, cc_amp, conv)
+            if (conv) then
+               write(iunit, '(1X, A)') 'Convergence reached within tolerance.'
+               write(iunit, '(1X, A, 1X, F15.8)') 'Final CCSD Energy (Hartree):', st%energy
+
+               ! Copied for return 
+               sys%e_ccsd = st%energy
+               call move_alloc(cc_amp%t_ia, sys%t1)
+               call move_alloc(cc_amp%t_ijab, sys%t2)
+               exit
+            end if
+            write(iunit, '(1X, A, 1X, I3, 1X, F15.8)') 'Iteration', iter, st%energy 
          end do
          end associate
 
-         sys%e_ccsd = st%energy
+         deallocate(st%t2_old)
+         call deallocate_cc_int_t(cc_int)
 
       end subroutine do_ccsd
 
@@ -179,6 +193,8 @@ module ccsd
          call check_allocate('cc_int%F_ov', 4*nocc*(n-nocc), ierr)
          allocate(cc_int%W_oooo(2*nocc,2*nocc,2*nocc,2*nocc), source=0.0_dp, stat=ierr)
          call check_allocate('cc_int%W_oooo', 16*nocc**4, ierr)
+         allocate(cc_int%W_vvvv(2*nocc+1:2*n,2*nocc+1:2*n,2*nocc+1:2*n,2*nocc+1:2*n), source=0.0_dp, stat=ierr)
+         call check_allocate('cc_int%W_vvvv', 16*(n-nocc)**4, ierr)
          allocate(cc_int%W_ovvo(2*nocc,2*nocc+1:2*n,2*nocc+1:2*n,2*nocc), source=0.0_dp, stat=ierr)
          call check_allocate('cc_int%W_ovvo', 16*nocc**2*(n-nocc)**2, ierr)
          allocate(cc_int%tau(2*nocc,2*nocc,2*nocc+1:2*n,2*nocc+1:2*n), source=0.0_dp, stat=ierr)
@@ -189,6 +205,17 @@ module ccsd
 
       end subroutine init_cc
 
+      subroutine deallocate_cc_int_t(cc_int)
+         type(cc_int_t), intent(inout) :: cc_int
+
+         deallocate(cc_int%F_oo, cc_int%F_vv, cc_int%F_ov)
+         deallocate(cc_int%W_oooo, cc_int%W_vvvv, cc_int%W_ovvo)
+         deallocate(cc_int%tau, cc_int%tau_tilde)
+         deallocate(cc_int%D_ia, cc_int%D_ijab)
+         deallocate(cc_int%tmp_tia, cc_int%tmp_tijab)
+      end subroutine
+
+
       subroutine update_amplitudes(sys, cc_amp, int_store, cc_int)
          use integrals, only: int_store_t
 
@@ -198,15 +225,15 @@ module ccsd
          type(cc_int_t), intent(inout) :: cc_int
 
          integer :: i, j, a, b, m, n, e, f
-         real(p) :: W_abef
          
          associate(tmp_t1=>cc_int%tmp_tia,tmp_t2=>cc_int%tmp_tijab,t1=>cc_amp%t_ia,t2=>cc_amp%t_ijab,asym=>int_store%asym_spinorb, &
             F_oo=>cc_int%F_oo,F_ov=>cc_int%F_ov,F_vv=>cc_int%F_vv,D_ia=>cc_int%D_ia,D_ijab=>cc_int%D_ijab,W_oooo=>cc_int%W_oooo, &
-            W_ovvo=>cc_int%W_ovvo,tau=>cc_int%tau,tau_tilde=>cc_int%tau_tilde,nocc=>sys%nocc,nbasis=>sys%nbasis)
+            W_ovvo=>cc_int%W_ovvo,tau=>cc_int%tau,tau_tilde=>cc_int%tau_tilde,nocc=>sys%nocc,nbasis=>sys%nbasis,&
+            W_vvvv=>cc_int%W_vvvv)
 
          ! Update T1
          !$omp parallel default(none) &
-         !$omp private(i, j, a, b, m, n, e, f, W_abef) &
+         !$omp private(i, j, a, b, m, n, e, f) &
          !$omp shared(sys, cc_amp, int_store, cc_int)
 
          !$omp master
@@ -258,11 +285,7 @@ module ccsd
                               t2(i,j,b,e)*tmp_t1(m,a))
                         end do
                         do f = 2*nocc+1, 2*nbasis
-                           W_abef = asym(a,b,e,f)
-                           do n = 1, 2*nocc
-                              W_abef = W_abef - tmp_t1(n,b)*asym(a,n,e,f) + tmp_t1(n,a)*asym(b,n,e,f)
-                           end do
-                           tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) + 0.5*tau(i,j,e,f)*W_abef
+                           tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) + 0.5*tau(i,j,e,f)*W_vvvv(a,b,e,f)
                         end do
                      end do
                      do m = 1, 2*nocc
@@ -298,7 +321,7 @@ module ccsd
 
       end subroutine update_amplitudes
 
-      subroutine update_cc_energy(sys, st, int_store, cc_amp)
+      subroutine update_cc_energy(sys, st, int_store, cc_amp, conv)
          use system, only: state_t
          use integrals, only: int_store_t
 
@@ -306,21 +329,36 @@ module ccsd
          type(int_store_t), intent(in) :: int_store
          type(cc_amp_t), intent(in) :: cc_amp
          type(state_t), intent(inout) :: st
+         logical, intent(out) :: conv
 
          integer :: i, j, a, b
+         real(p) :: ecc, rmst2
 
+         conv = .false.
          st%energy_old = st%energy
-         st%energy = 0.0_p
          associate(nocc=>sys%nocc, nbasis=>sys%nbasis, asym=>int_store%asym_spinorb, t1=>cc_amp%t_ia, t2=>cc_amp%t_ijab)
+            !$omp parallel default(none) &
+            !$omp private(i,j,a,b) &
+            !$omp shared(sys,st,int_store,cc_amp,ecc,rmst2) 
+            ecc = 0.0_p
+            rmst2 = 0.0_p
+            !$omp do schedule(dynamic, 2) collapse(4) reduction(+:ecc,rmst2)
             do i = 1, 2*nocc
                do j = 1, 2*nocc
                   do a = 2*nocc+1, 2*nbasis
                      do b = 2*nocc+1, 2*nbasis
-                        st%energy = st%energy + 0.25*asym(i,j,a,b)*(t2(i,j,a,b)+2*t1(i,a)*t1(j,b))
+                        ecc = ecc + 0.25*asym(i,j,a,b)*(t2(i,j,a,b)+2*t1(i,a)*t1(j,b))
+                        rmst2 = rmst2 + (t2(i,j,a,b)-st%t2_old(i,j,a,b))**2
                      end do
                   end do
                end do
             end do
+            !$omp end do
+            !$omp end parallel
+            st%energy = ecc
+            st%t2_old = t2
+            if (sqrt(rmst2) < 1e-5 .and. abs(st%energy-st%energy_old) < 1e-5) conv = .true.
+
          end associate
 
       end subroutine update_cc_energy
@@ -431,15 +469,15 @@ module ccsd
          type(cc_amp_t), intent(in) :: cc_amp
          real(p), intent(in) :: asym(:,:,:,:)
          type(cc_int_t), intent(inout) :: cc_int
-         integer :: m, n, i, j, e, f, b
+         integer :: m, n, i, j, e, f, b, a
          real(p) :: x
 
          associate(nbasis=>sys%nbasis, nocc=>sys%nocc, t_ia=>cc_amp%t_ia, t_ijab=>cc_amp%t_ijab,&
-            W_oooo=>cc_int%W_oooo, W_ovvo=>cc_int%W_ovvo, tau=>cc_int%tau)
+            W_oooo=>cc_int%W_oooo, W_ovvo=>cc_int%W_ovvo, tau=>cc_int%tau, W_vvvv=>cc_int%W_vvvv)
          W_oooo = 0.0_p
          W_ovvo = 0.0_p
          !$omp parallel default(none) &
-         !$omp private(m, n, i, j, e, f, b, x) &
+         !$omp private(m, n, i, j, e, f, b, x, a) &
          !$omp shared(sys, cc_int, cc_amp, asym)
 
          !$omp do schedule(dynamic, 2) collapse(4)
@@ -453,6 +491,21 @@ module ccsd
                         do f = 2*nocc+1, 2*nbasis
                            W_oooo(m,n,i,j) = W_oooo(m,n,i,j) + 0.5*t_ijab(i,j,e,f)*asym(m,n,e,f)
                         end do
+                     end do
+                  end do
+               end do
+            end do
+         end do
+         !$omp end do
+
+         !$omp do schedule(dynamic, 2) collapse(4)
+         do a = 2*nocc+1, 2*nbasis
+            do b = 2*nocc+1, 2*nbasis
+               do e = 2*nocc+1, 2*nbasis
+                  do f = 2*nocc+1, 2*nbasis
+                     W_vvvv(a,b,e,f) = asym(a,b,e,f)
+                     do n = 1, 2*nocc
+                        W_vvvv(a,b,e,f) = W_vvvv(a,b,e,f) - t_ia(n,b)*asym(a,n,e,f) + t_ia(n,a)*asym(b,n,e,f)
                      end do
                   end do
                end do

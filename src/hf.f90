@@ -43,7 +43,6 @@ module hf
          write(iunit, '(1X, A)') 'Hartree-Fock'
          write(iunit, '(1X, 12("-"))')
 
-         allocate(st%density(sys%nbasis,sys%nbasis), source=0.0_p)
          allocate(st%density_old(sys%nbasis,sys%nbasis), source=0.0_p)
 
          ! Build the orthogonalisation matrix S^-1/2
@@ -93,48 +92,62 @@ module hf
             call build_fock(sys, density, fockmat%ao, int_store)
 
             ! DIIS update
-            !call update_diis(diis, fockmat%ao, density, int_store%ovlp)
-            diis%iter = diis%iter+1
-            if (diis%iter > 6) diis%iter = diis%iter - 6
-            if (diis%n_active < diis%n_errmat) diis%n_active = diis%n_active+1
-            diis%F(diis%iter,:,:) = 0.0_p
-            diis%e(diis%iter,:,:) = 0.0_p
-            diis%F(diis%iter,:,:) = fockmat%ao(:,:)
-            diis%e(diis%iter,:,:) = matmul(fockmat%ao, matmul(density,int_store%ovlp)) &
-                                  - matmul(int_store%ovlp, matmul(density, fockmat%ao))
-
-            associate(n=>diis%n_active, nerr=>diis%n_errmat)
-            if (n > 1) then
-               ! Construct the B matrix
-               if (n <= nerr) then
-                  if (allocated(diis%B)) deallocate(diis%B, diis%c, diis%rhs)
-                  allocate(diis%B(n+1,n+1), diis%c(n+1), diis%rhs(n+1), source=0.0_p)
-               end if
-               diis%B(n+1,:) = -1.0_p
-               diis%B(n+1,n+1) = 0.0_p
-               diis%rhs(n+1) = -1.0_p
-               diis%c = diis%rhs
-               do i = 1, n
-                  do j = 1, i
-                     diis%B(i,j) = sum(diis%e(i,:,:)*diis%e(j,:,:))
-                  end do
-               end do
-               call linsolve(diis%B, diis%c, ierr)
-               if (ierr /= 0) call error('hf::linsolve', 'Linear solve failed!')
-               fockmat%ao = 0.0_p
-               do i = 1, n
-                  fockmat%ao = fockmat%ao + diis%c(i) * diis%F(i,:,:)
-               end do
-            end if
-            end associate
-
+            call update_diis(diis, fockmat%ao, density, int_store%ovlp)
          end do
 
          if (.not. conv) then
             write(iunit, '(1X, A)') 'Convergence not reached, please increase maxiter.'
          end if
 
+         call deallocate_diis_t(diis)
+         deallocate(st%density_old)
+
       end subroutine do_hartree_fock
+
+      subroutine update_diis(diis, fock, density, ovlp)
+         use linalg, only: linsolve
+         use error_handling, only: error
+
+         type(diis_t), intent(inout) :: diis
+         real(p), intent(inout) :: fock(:,:)
+         real(p), intent(in) :: ovlp(:,:), density(:,:)
+
+         integer :: i, j, ierr
+
+         diis%iter = diis%iter+1
+         if (diis%iter > 6) diis%iter = diis%iter - 6
+         if (diis%n_active < diis%n_errmat) diis%n_active = diis%n_active+1
+         diis%F(diis%iter,:,:) = 0.0_p
+         diis%e(diis%iter,:,:) = 0.0_p
+         diis%F(diis%iter,:,:) = fock(:,:)
+         diis%e(diis%iter,:,:) = matmul(fock, matmul(density,ovlp)) &
+                               - matmul(ovlp, matmul(density, fock))
+
+         associate(n=>diis%n_active, nerr=>diis%n_errmat)
+         if (n > 1) then
+            ! Construct the B matrix
+            if (n <= nerr) then
+               if (allocated(diis%B)) deallocate(diis%B, diis%c, diis%rhs)
+               allocate(diis%B(n+1,n+1), diis%c(n+1), diis%rhs(n+1), source=0.0_p)
+            end if
+            diis%B(n+1,:) = -1.0_p
+            diis%B(n+1,n+1) = 0.0_p
+            diis%rhs(n+1) = -1.0_p
+            diis%c = diis%rhs
+            do i = 1, n
+               do j = 1, i
+                  diis%B(i,j) = sum(diis%e(i,:,:)*diis%e(j,:,:))
+               end do
+            end do
+            call linsolve(diis%B, diis%c, ierr)
+            if (ierr /= 0) call error('hf::update_diis', 'Linear solve failed!')
+            fock = 0.0_p
+            do i = 1, n
+               fock = fock + diis%c(i) * diis%F(i,:,:)
+            end do
+         end if
+         end associate
+      end subroutine update_diis
 
       subroutine init_diis_t(sys, diis)
          use system, only: system_t
@@ -147,6 +160,12 @@ module hf
             allocate(diis%F(diis%n_errmat,n,n), source=0.0_p)
          end associate
       end subroutine init_diis_t
+
+      subroutine deallocate_diis_t(diis)
+         type(diis_t), intent(inout) :: diis
+
+         deallocate(diis%e, diis%F, diis%B, diis%c, diis%rhs)
+      end subroutine deallocate_diis_t
 
       subroutine diagonalise(mat)
          ! For a symmetric matrix A we produce
@@ -244,13 +263,11 @@ module hf
          type(state_t), intent(inout) :: st
          logical, intent(inout) :: conv
 
-         st%density_old = st%density
-         st%density = density
-         
          st%energy_old = st%energy
          st%energy = sum(density * (int_store%core_hamil + fock))
 
-         if (sqrt(sum((density-st%density_old)**2)) < 1e-5 .and. abs(st%energy-st%energy_old) < 1e-5) conv = .true.
+         if (sqrt(sum((density-st%density_old)**2)) < 1e-7 .and. abs(st%energy-st%energy_old) < 1e-7) conv = .true.
+         st%density_old = density
 
       end subroutine update_scf_energy
          
