@@ -22,6 +22,20 @@ module ccsd
       real(dp), allocatable :: D_ia(:,:), D_ijab(:,:,:,:)
       real(dp), allocatable :: tmp_tia(:,:), tmp_tijab(:,:,:,:)
    end type cc_int_t
+
+   type diis_cc_t
+      ! Contains matrices for use in the DIIS procedure
+      integer :: n_errmat = 8
+      integer :: n_active = 0
+      integer :: iter = 0
+      real(p), allocatable :: e(:,:,:)
+      real(p), allocatable :: t1(:,:,:)
+      real(p), allocatable :: t2(:,:,:,:,:)
+      real(p), allocatable :: B(:,:)
+      real(p), allocatable :: c(:)
+      real(p), allocatable :: rhs(:)
+      integer, allocatable :: idx(:,:)
+   end type diis_cc_t
    
    contains
 
@@ -40,11 +54,12 @@ module ccsd
          real(dp) :: prqs, psqr
 
          type(state_t) :: st
+         type(diis_cc_t) :: diis
          
          type(cc_amp_t) :: cc_amp
          integer :: ierr, iter
          integer, parameter :: iunit = 6
-         integer, parameter :: maxiter = 50
+         integer, parameter :: maxiter = 100
 
          type(cc_int_t) :: cc_int
          logical :: conv
@@ -58,6 +73,8 @@ module ccsd
          write(iunit, '(1X, A)') 'Forming antisymmetrised spinorbital ERIs...'
          allocate(int_store%asym_spinorb(sys%nbasis*2,sys%nbasis*2,sys%nbasis*2,sys%nbasis*2), source=0.0_dp, stat=ierr)
          call check_allocate('int_store%asym_spinorb', sys%nbasis**4*16, ierr)
+
+         call init_diis_cc_t(sys, diis)
 
          associate(n=>sys%nbasis, asym=>int_store%asym_spinorb, eri=>int_store%eri_mo)
          ! [TODO]: this isn't necessary but easier for debugging, change to spin lookup arrays or something similar
@@ -96,6 +113,7 @@ module ccsd
 
          call init_cc(sys, int_store, cc_amp, cc_int)
          allocate(st%t2_old, source=cc_amp%t_ijab)
+         call init_diis_cc_t(sys, diis)
 
          write(iunit, '(1X, A)') 'Initialisation done, now entering iterative CC solver...'
 
@@ -118,14 +136,94 @@ module ccsd
                call move_alloc(cc_amp%t_ijab, sys%t2)
                exit
             end if
-            write(iunit, '(1X, A, 1X, I3, 1X, F15.8)') 'Iteration', iter, st%energy 
+            write(iunit, '(1X, A, 1X, I3, 1X, F15.8)') 'Iteration', iter, st%energy
+            call update_diis_cc(diis, cc_amp)
          end do
          end associate
 
          deallocate(st%t2_old)
          call deallocate_cc_int_t(cc_int)
+         call deallocate_diis_cc_t(diis)
 
       end subroutine do_ccsd
+
+      subroutine update_diis_cc(diis, cc_amp)
+         use linalg, only: linsolve
+         use error_handling, only: error
+
+         type(diis_cc_t), intent(inout) :: diis
+         type(cc_amp_t), intent(inout) :: cc_amp
+
+         integer :: i, j, ierr
+
+         diis%iter = diis%iter+1
+         if (diis%iter > diis%n_errmat) diis%iter = diis%iter - diis%n_errmat
+         if (diis%n_active < diis%n_errmat) diis%n_active = diis%n_active+1
+         diis%t1(diis%iter,:,:) = 0.0_p
+         diis%t2(diis%iter,:,:,:,:) = 0.0_p
+         diis%t1(diis%iter,:,:) = cc_amp%t_ia
+         diis%t2(diis%iter,:,:,:,:) = cc_amp%t_ijab
+
+         associate(n=>diis%n_active, nerr=>diis%n_errmat, it=>diis%iter, idx=>diis%idx)
+         if (n > 2) then
+            ! We need at least three CC iterations to have at least two error matrices
+            ! Construct index list (idx)
+            do i = 1, n-1
+               idx(i,1) = mod(it+i+1, n)+1
+               idx(i,2) = mod(it+i, n)+1
+            end do
+            ! Construct the B matrix
+            if (n <= nerr) then
+               if (allocated(diis%B)) deallocate(diis%B, diis%c, diis%rhs)
+               allocate(diis%B(n+1,n+1), diis%c(n+1), diis%rhs(n+1), source=0.0_p)
+            end if
+            diis%B(n+1,:) = -1.0_p
+            diis%B(n+1,n+1) = 0.0_p
+            diis%rhs(n+1) = -1.0_p
+            diis%c = diis%rhs
+            do i = 1, n-1
+               do j = 1, i
+                  ! We compute the error matrices on the fly
+                  ! [TODO] - shift iter index to the end to give better cache behaviour
+                  diis%B(i,j) = sum((diis%t1(idx(i,1),:,:)-diis%t1(idx(i,2),:,:))*(diis%t1(idx(j,1),:,:)-diis%t1(idx(j,2),:,:))) &
+                  + sum((diis%t2(idx(i,1),:,:,:,:)-diis%t2(idx(i,2),:,:,:,:))*(diis%t2(idx(j,1),:,:,:,:)-diis%t2(idx(j,2),:,:,:,:)))
+               end do
+            end do
+            call linsolve(diis%B, diis%c, ierr)
+            if (ierr /= 0) call error('ccsd::update_diis_cc', 'Linear solve failed!')
+            cc_amp%t_ia = 0.0_p
+            cc_amp%t_ijab = 0.0_p
+            do i = 1, n
+               cc_amp%t_ia = cc_amp%t_ia + diis%c(i) * diis%t1(i,:,:)
+               cc_amp%t_ijab = cc_amp%t_ijab + diis%c(i) * diis%t2(i,:,:,:,:)
+            end do
+         end if
+         end associate
+      end subroutine update_diis_cc
+
+      subroutine init_diis_cc_t(sys, diis)
+         use error_handling, only: check_allocate
+
+         type(system_t), intent(in) :: sys
+         type(diis_cc_t), intent(out) :: diis
+
+         integer :: ierr
+
+         allocate(diis%idx(diis%n_errmat,2), source=0)
+
+         associate(n=>sys%nbasis, nocc=>sys%nocc)
+            allocate(diis%t1(diis%n_errmat,2*nocc,2*nocc+1:2*n), source=0.0_p, stat=ierr)
+            call check_allocate('diis%t1', diis%n_errmat*4*nocc*(n-nocc), ierr)
+            allocate(diis%t2(diis%n_errmat,2*nocc,2*nocc,2*nocc+1:2*n,2*nocc+1:2*n), source=0.0_p, stat=ierr)
+            call check_allocate('diis%t1', diis%n_errmat*16*(nocc*(n-nocc))**2, ierr)
+         end associate
+      end subroutine init_diis_cc_t
+
+      subroutine deallocate_diis_cc_t(diis)
+         type(diis_cc_t), intent(inout) :: diis
+
+         deallocate(diis%t1, diis%t2, diis%B, diis%c, diis%rhs)
+      end subroutine deallocate_diis_cc_t
 
       subroutine init_cc(sys, int_store, cc_amp, cc_int)
          use integrals, only: int_store_t
@@ -362,7 +460,7 @@ module ccsd
             !$omp end parallel
             st%energy = ecc
             st%t2_old = t2
-            if (sqrt(rmst2) < 1e-5 .and. abs(st%energy-st%energy_old) < 1e-5) conv = .true.
+            if (sqrt(rmst2) < 1e-12 .and. abs(st%energy-st%energy_old) < 1e-12) conv = .true.
 
          end associate
 

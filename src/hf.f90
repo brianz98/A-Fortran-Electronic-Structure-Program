@@ -115,7 +115,7 @@ module hf
          integer :: i, j, ierr
 
          diis%iter = diis%iter+1
-         if (diis%iter > 6) diis%iter = diis%iter - 6
+         if (diis%iter > diis%n_errmat) diis%iter = diis%iter - diis%n_errmat
          if (diis%n_active < diis%n_errmat) diis%n_active = diis%n_active+1
          diis%F(diis%iter,:,:) = 0.0_p
          diis%e(diis%iter,:,:) = 0.0_p
@@ -266,7 +266,7 @@ module hf
          st%energy_old = st%energy
          st%energy = sum(density * (int_store%core_hamil + fock))
 
-         if (sqrt(sum((density-st%density_old)**2)) < 1e-7 .and. abs(st%energy-st%energy_old) < 1e-7) conv = .true.
+         if (sqrt(sum((density-st%density_old)**2)) < 1e-12 .and. abs(st%energy-st%energy_old) < 1e-12) conv = .true.
          st%density_old = density
 
       end subroutine update_scf_energy
