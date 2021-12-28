@@ -7,7 +7,7 @@ program main
     use hf, only: do_hartree_fock
     use geometry, only: read_geometry_in
     use mp2, only: do_mp2
-    use ccsd, only: do_ccsd
+    use ccsd, only: do_ccsd, do_ccsd_t
 
     implicit none
 
@@ -35,25 +35,31 @@ program main
     call print_sys_info(sys, int_store)
     call system_clock(t1)
     if (t1<t0) t1 = t1+count_max ! Moving time blocks, see system_clock documentation
-    write(iunit, '(1X, A, 1X, F7.5, A)') 'Time taken for system initialisation:', real(t1-t0)/count_rate, "s"
+    write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for system initialisation:', real(t1-t0)/count_rate, "s"
     t0=t1
 
     call do_hartree_fock(sys, int_store)
     call system_clock(t1)
     if (t1<t0) t1 = t1+count_max
-    write(iunit, '(1X, A, 1X, F7.5, A)') 'Time taken for Hartree-Fock:', real(t1-t0)/count_rate, "s"
+    write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for Hartree-Fock:', real(t1-t0)/count_rate, "s"
     t0=t1
 
     call do_mp2(sys, int_store)
     call system_clock(t1)
     if (t1<t0) t1 = t1+count_max
-    write(iunit, '(1X, A, 1X, F7.5, A)') 'Time taken for MP2:', real(t1-t0)/count_rate, "s"
+    write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for MP2:', real(t1-t0)/count_rate, "s"
     t0=t1
 
     call do_ccsd(sys, int_store)
     call system_clock(t1)
     if (t1<t0) t1 = t1+count_max
-    write(iunit, '(1X, A, 1X, F7.5, A)') 'Time taken for CCSD:', real(t1-t0)/count_rate, "s"
+    write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for CCSD:', real(t1-t0)/count_rate, "s"
+    t0=t1
+
+    call do_ccsd_t(sys, int_store)
+    call system_clock(t1)
+    if (t1<t0) t1 = t1+count_max
+    write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for CCSD(T):', real(t1-t0)/count_rate, "s"
     t0=t1
 
     write(iunit, '(1X, 64("="))')

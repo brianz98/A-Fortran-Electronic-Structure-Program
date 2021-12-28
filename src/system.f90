@@ -22,6 +22,7 @@ module system
       ! Coefficient matrix of the canonical HF orbitals in the original, nonorthogonal AO basis
       real(p), allocatable :: canon_coeff(:,:)
       real(p), allocatable :: canon_levels(:)
+      real(p), allocatable :: canon_levels_spinorb(:)
 
       ! Converged CCSD amplitudes
       real(p), allocatable :: t1(:,:)

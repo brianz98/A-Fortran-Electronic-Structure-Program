@@ -131,7 +131,7 @@ module ccsd
          use integrals, only: int_store_t
          use error_handling, only: check_allocate 
 
-         type(system_t), intent(in) :: sys
+         type(system_t), intent(inout) :: sys
          type(int_store_t), intent(in) :: int_store
          type(cc_amp_t), intent(inout) :: cc_amp
          type(cc_int_t), intent(inout) :: cc_int
@@ -157,6 +157,11 @@ module ccsd
             end do
          end do
 
+         allocate(sys%canon_levels_spinorb(2*n), source=0.0_dp)
+         do i = 1, n
+            sys%canon_levels_spinorb(2*i-1:2*i) = e(i)
+         end do
+      
          write(iunit, '(1X, A)') 'Allocating amplitude tensors...'
          ! Initialise t_i^a=0 and t_{ij}^{ab}=MP1 WF
          allocate(cc_amp%t_ijab(2*nocc,2*nocc,2*nocc+1:2*n,2*nocc+1:2*n), source=0.0_dp, stat=ierr)
@@ -539,5 +544,75 @@ module ccsd
 
          end associate
       end subroutine build_W
+
+      subroutine do_ccsd_t(sys, int_store)
+         use integrals, only: int_store_t
+         use error_handling, only: check_allocate
+
+         type(system_t), intent(inout) :: sys
+         type(int_store_t), intent(in) :: int_store
+
+         integer :: i, j, k, a, b, c, f, m, ierr
+         real(p), allocatable :: tmp_t3d(:,:,:), tmp_t3c(:,:,:), tmp_t3c_d(:,:,:)
+         real(p) :: e_T
+
+         associate(nbasis=>sys%nbasis, nocc=>sys%nocc, e=>sys%canon_levels_spinorb, t1=>sys%t1, t2=>sys%t2,&
+                   asym=>int_store%asym_spinorb)
+         !$omp parallel default(none) &
+         !$omp private(i, j, k, a, b, c, f, m, tmp_t3d, tmp_t3c, tmp_t3c_d, ierr) &
+         !$omp shared(sys, int_store, e_T)
+         e_T = 0.0_p
+         
+         ! Declare heap-allocated arrays inside parallel region
+         allocate(tmp_t3d(2*nocc+1:2*nbasis,2*nocc+1:2*nbasis,2*nocc+1:2*nbasis), source=0.0_p, stat=ierr)
+         call check_allocate('tmp_t3d', 8*(nbasis-nocc)**3, ierr)
+         allocate(tmp_t3c(2*nocc+1:2*nbasis,2*nocc+1:2*nbasis,2*nocc+1:2*nbasis), source=0.0_p, stat=ierr)
+         call check_allocate('tmp_t3c', 8*(nbasis-nocc)**3, ierr)
+         allocate(tmp_t3c_d(2*nocc+1:2*nbasis,2*nocc+1:2*nbasis,2*nocc+1:2*nbasis), source=0.0_p, stat=ierr)
+         call check_allocate('tmp_t3c_d', 8*(nbasis-nocc)**3, ierr)
+
+         !$omp do schedule(dynamic, 2) collapse(3) reduction(+:e_T)
+         do i = 1, 2*nocc
+            do j = 1, 2*nocc
+               do k = 1, 2*nocc
+                  ! Compute T3 amplitudes                  
+                  do a = 2*nocc+1, 2*nbasis
+                     do b = 2*nocc+1, 2*nbasis
+                        do c = 2*nocc+1, 2*nbasis
+                           ! Disonnected T3: t_{ijk}^{abc}(d) = P(i/jk)P(a/bc)t_i^a*<jk||bc>
+                           tmp_t3d(a,b,c) = t1(i,a)*asym(j,k,b,c) - t1(j,a)*asym(i,k,b,c) - t1(k,a)*asym(j,i,b,c) &
+                                          - t1(i,b)*asym(j,k,a,c) + t1(j,b)*asym(i,k,a,c) + t1(k,b)*asym(j,i,a,c) &
+                                          - t1(i,c)*asym(j,k,b,a) + t1(j,c)*asym(i,k,b,a) + t1(k,c)*asym(j,i,b,a)
+                           tmp_t3d(a,b,c) = tmp_t3d(a,b,c)/(e(i)+e(j)+e(k)-e(a)-e(b)-e(c))               
+                           ! Conneccted T3: t_{ijk}^{abc}(c) = P(i/jk)P(a/bc)[\sum_f t_jk^af <fi||bc> - \sum_m t_im^bc <ma||jk>]
+                           
+                           tmp_t3c(a,b,c) = 0.0_p
+                           do f = 2*nocc+1, 2*nbasis
+                              tmp_t3c(a,b,c) = tmp_t3c(a,b,c) &
+                                             + t2(j,k,a,f)*asym(f,i,b,c) - t2(i,k,a,f)*asym(f,j,b,c) - t2(j,i,a,f)*asym(f,k,b,c) &
+                                             - t2(j,k,b,f)*asym(f,i,a,c) + t2(i,k,b,f)*asym(f,j,a,c) + t2(j,i,b,f)*asym(f,k,a,c) &
+                                             - t2(j,k,c,f)*asym(f,i,b,a) + t2(i,k,c,f)*asym(f,j,b,a) + t2(j,i,c,f)*asym(f,k,b,a)
+                           end do
+                           do m = 1, 2*nocc
+                              tmp_t3c(a,b,c) = tmp_t3c(a,b,c) &
+                                             - t2(i,m,b,c)*asym(m,a,j,k) + t2(j,m,b,c)*asym(m,a,i,k) + t2(k,m,b,c)*asym(m,a,j,i) &
+                                             + t2(i,m,a,c)*asym(m,b,j,k) - t2(j,m,a,c)*asym(m,b,i,k) - t2(k,m,a,c)*asym(m,b,j,i) &
+                                             + t2(i,m,b,a)*asym(m,c,j,k) - t2(j,m,b,a)*asym(m,c,i,k) - t2(k,m,b,a)*asym(m,c,j,i)
+                           end do
+                           tmp_t3c_d(a,b,c) = tmp_t3c(a,b,c)/(e(i)+e(j)+e(k)-e(a)-e(b)-e(c))
+                        end do
+                     end do
+                  end do
+                  
+                  ! Calculate contributions
+                  e_T = e_T + sum(tmp_t3c*(tmp_t3c_d+tmp_t3d))/36
+               end do
+            end do
+         end do
+         !$omp end do
+         !$omp end parallel
+         print*, e_T
+         end associate
+      end subroutine do_ccsd_t
 
 end module ccsd
