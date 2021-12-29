@@ -4,10 +4,21 @@ module integrals
     implicit none
 
     public
-    private :: ioff, bignum
+    private :: istart, bignum
 
-    integer, parameter :: bignum = 1000
-    integer :: ioff(bignum)
+    ! These define a module-internal lookup array of triangular numbers, used in eri_ind below
+    ! This is to avoid the repeated calculation of i(i+1)/2.
+    ! istart stores the flattened index of the first elements of each row of a lower triangular matrix minus one:
+    ! 1
+    ! 2 3               ==> istart = [0, 1, 3, 6, ...]
+    ! 4 5 6
+    ! 7 8 9 10
+    ! So when we want to look up the array element (4,2) of the triangular array, stored in a flattened array, 
+    ! the index of element at (4,2) in the flattened array is just istart(4) + 2 = 8
+
+    ! bignum should be bigger than n(n-1)/2 where n is the number of basis functions, so currently we can accommodate ~100 basis functions
+    integer, parameter :: bignum = 5000
+    integer :: istart(bignum)
 
     type int_store_t
         real(p) :: e_nuc = 0.0_p
@@ -125,7 +136,7 @@ module integrals
             write(iunit, *) 'Reading two-body integrals...'
             open(newunit=ir, file=eri_f, status='old', form='formatted')
 
-            call init_ioff()
+            call init_istart()
 
             do
                 read(ir, *, iostat=ios) ibasis, jbasis, abasis, bbasis, intgrl
@@ -162,14 +173,14 @@ module integrals
             end associate
         end subroutine init_int_store
 
-        subroutine init_ioff()
+        subroutine init_istart()
             integer :: i
 
-            ioff(1) = 1
+            istart(1) = 0
                 do i = 2, bignum
-                    ioff(i) = ioff(i-1) + i-1
+                    istart(i) = istart(i-1) + i-1
                 end do
-        end subroutine
+        end subroutine init_istart
 
         elemental function eri_ind(i, j) result(ind)
             ! This function can be a general version for i,j,a,b, but 
@@ -180,9 +191,9 @@ module integrals
             integer :: ind
 
             if (i >= j) then
-                ind = ioff(i) + j-1
+                ind = istart(i) + j
             else
-                ind = ioff(j) + i-1
+                ind = istart(j) + i
             end if
 
         end function eri_ind

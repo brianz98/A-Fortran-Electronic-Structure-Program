@@ -28,7 +28,11 @@ module system
       real(p), allocatable :: t1(:,:)
       real(p), allocatable :: t2(:,:,:,:)
 
-      
+      ! Tolerances
+      real(p) :: scf_e_tol = 1e-6
+      real(p) :: scf_d_tol = 1e-6
+      real(p) :: ccsd_e_tol = 1e-6
+      real(p) :: ccsd_t_tol = 1e-6
 
    end type system_t
 

@@ -72,7 +72,7 @@ module hf
 
             call build_density(fockmat%A, density, sys%nel/2)
 
-            call update_scf_energy(density, fockmat%ao, st, int_store, conv)
+            call update_scf_energy(sys, density, fockmat%ao, st, int_store, conv)
             if (conv) then
                write(iunit, '(1X, A)') 'Convergence reached within tolerance.'
                write(iunit, '(1X, A, 1X, F15.8)') 'Final SCF Energy (Hartree):', st%energy
@@ -252,11 +252,12 @@ module hf
 
       end subroutine build_density
 
-      subroutine update_scf_energy(density, fock, st, int_store, conv)
+      subroutine update_scf_energy(sys, density, fock, st, int_store, conv)
          
-         use system, only: state_t
+         use system, only: system_t, state_t
          use integrals, only: int_store_t
 
+         type(system_t), intent(in) :: sys
          real(p), intent(in) :: density(:,:)
          real(p), intent(in) :: fock(:,:)
          type(int_store_t), intent(in) :: int_store
@@ -266,7 +267,7 @@ module hf
          st%energy_old = st%energy
          st%energy = sum(density * (int_store%core_hamil + fock))
 
-         if (sqrt(sum((density-st%density_old)**2)) < 1e-12 .and. abs(st%energy-st%energy_old) < 1e-12) conv = .true.
+         if (sqrt(sum((density-st%density_old)**2))<sys%scf_d_tol .and. abs(st%energy-st%energy_old)<sys%scf_e_tol) conv = .true.
          st%density_old = density
 
       end subroutine update_scf_energy

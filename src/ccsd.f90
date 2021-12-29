@@ -27,7 +27,7 @@ module ccsd
    type diis_cc_t
       ! Contains information for use in the CCSD DIIS procedure 
       ! Accelerating the convergence of the coupled-cluster approach: The use of the DIIS method
-      ! Gustavo E.ScuseriaTimothy J.LeeHenry F.SchaeferIII
+      ! Gustavo E. Scuseria, Timothy J. Lee, Henry F. Schaefer III
       ! (https://doi.org/10.1016/0009-2614(86)80461-4)
 
       ! These are identical as the HF-SCF ones, other than that we store and use the T matrices, 
@@ -330,7 +330,7 @@ module ccsd
             ! Concrete example, say n_errmat=8, and we're at iteration 4 (overwriting the 4th T matrices), so the error matrices
             ! should be: 
             ! e_1 = T4-T3 (== 4-3), e_2=3-2, e_3=2-1, e_4=1-8, e_5=8-7, e_6=7-6, e_7=6-5
-            ! So out idx array should look like
+            ! So our idx array should look like
             ! 4 3 2 1 8 7 6
             ! 3 2 1 8 7 6 5
             ! (note that the code below gives something like this but with the columns swapped around but that's ok)
@@ -609,9 +609,11 @@ module ccsd
          !$omp private(i, j, a, b, m, n, e, f) &
          !$omp shared(sys, cc_amp, int_store, cc_int)
 
-         !$omp master
+         ! Implied barrier here, better than master which doesn't have implied barrier
+         ! tmp_t1 can be shared as each loop iteration will update a unique element of it.
+         !$omp single
          tmp_t1 = 0.0_dp
-         !$omp end master
+         !$omp end single
          !$omp do schedule(dynamic, 2) collapse(2)
          do i = 1, 2*nocc
             do a = 2*nocc+1, 2*nbasis
@@ -637,12 +639,12 @@ module ccsd
          end do
          !$omp end do
 
-         !$omp master
+         !$omp single
          tmp_t1 = tmp_t1/D_ia
          
          ! Update T2
          tmp_t2 = 0.0_dp
-         !$omp end master
+         !$omp end single
 
          !$omp do schedule(dynamic, 2) collapse(4)
          do i = 1, 2*nocc
@@ -731,6 +733,7 @@ module ccsd
                   do a = 2*nocc+1, 2*nbasis
                      do b = 2*nocc+1, 2*nbasis
                         ecc = ecc + 0.25*asym(i,j,a,b)*(t2(i,j,a,b)+2*t1(i,a)*t1(j,b))
+                        ! We only do the RMS on T2 amplitudes
                         rmst2 = rmst2 + (t2(i,j,a,b)-st%t2_old(i,j,a,b))**2
                      end do
                   end do
@@ -741,7 +744,7 @@ module ccsd
             st%energy = ecc
             st%t2_old = t2
             ! [TODO]: stop hard-coding tolerance, or at least unify it with HF
-            if (sqrt(rmst2) < 1e-12 .and. abs(st%energy-st%energy_old) < 1e-12) conv = .true.
+            if (sqrt(rmst2) < sys%ccsd_t_tol .and. abs(st%energy-st%energy_old) < sys%ccsd_e_tol) conv = .true.
 
          end associate
 
@@ -753,7 +756,7 @@ module ccsd
          !     int_store: integral information.
          ! In/out:
          !     sys: holds converged amplitudes from CCSD
-         
+
          use integrals, only: int_store_t
          use error_handling, only: check_allocate
 
@@ -763,6 +766,11 @@ module ccsd
          integer :: i, j, k, a, b, c, f, m, ierr
          real(p), allocatable :: tmp_t3d(:,:,:), tmp_t3c(:,:,:), tmp_t3c_d(:,:,:)
          real(p) :: e_T
+         integer, parameter :: iunit = 6
+
+         write(iunit, '(1X, 10("-"))')
+         write(iunit, '(1X, A)') 'CCSD(T)'
+         write(iunit, '(1X, 10("-"))')
 
          associate(nbasis=>sys%nbasis, nocc=>sys%nocc, e=>sys%canon_levels_spinorb, t1=>sys%t1, t2=>sys%t2,&
                    asym=>int_store%asym_spinorb)
@@ -779,6 +787,11 @@ module ccsd
          allocate(tmp_t3c_d(2*nocc+1:2*nbasis,2*nocc+1:2*nbasis,2*nocc+1:2*nbasis), source=0.0_p, stat=ierr)
          call check_allocate('tmp_t3c_d', 8*(nbasis-nocc)**3, ierr)
 
+         ! We use avoid the storage of full triples (six-dimensional array..) and instead use the strategy of 
+         ! batched triples storage, denoted W^{ijk}(abc) in (https://doi.org/10.1016/0009-2614(91)87003-T).
+         ! We could of course only compute one element in a loop iteration but that will probably result in bad floating point
+         ! performance, here for each thread/loop iteration we use the Fortran intrinsic sum, 
+         ! instead of all relying on OMP reduction, to hopefully give better floating point performance.
          !$omp do schedule(dynamic, 2) collapse(3) reduction(+:e_T)
          do i = 1, 2*nocc
             do j = 1, 2*nocc
@@ -787,13 +800,15 @@ module ccsd
                   do a = 2*nocc+1, 2*nbasis
                      do b = 2*nocc+1, 2*nbasis
                         do c = 2*nocc+1, 2*nbasis
-                           ! Disonnected T3: t_{ijk}^{abc}(d) = P(i/jk)P(a/bc)t_i^a*<jk||bc>
+                           ! Disonnected T3: D_{ijk}^{abc}*t_{ijk}^{abc}(d) = P(i/jk)P(a/bc)t_i^a*<jk||bc>
+                           ! Can be rewritten directly as no sums in the expression
                            tmp_t3d(a,b,c) = t1(i,a)*asym(j,k,b,c) - t1(j,a)*asym(i,k,b,c) - t1(k,a)*asym(j,i,b,c) &
                                           - t1(i,b)*asym(j,k,a,c) + t1(j,b)*asym(i,k,a,c) + t1(k,b)*asym(j,i,a,c) &
                                           - t1(i,c)*asym(j,k,b,a) + t1(j,c)*asym(i,k,b,a) + t1(k,c)*asym(j,i,b,a)
                            tmp_t3d(a,b,c) = tmp_t3d(a,b,c)/(e(i)+e(j)+e(k)-e(a)-e(b)-e(c))               
-                           ! Conneccted T3: t_{ijk}^{abc}(c) = P(i/jk)P(a/bc)[\sum_f t_jk^af <fi||bc> - \sum_m t_im^bc <ma||jk>]
-                           
+
+                           ! Connected T3: D_{ijk}^{abc}*t_{ijk}^{abc}(c) = P(i/jk)P(a/bc)[\sum_f t_jk^af <fi||bc> - \sum_m t_im^bc <ma||jk>]
+                           ! Has to be zeroed as all terms are sums
                            tmp_t3c(a,b,c) = 0.0_p
                            do f = 2*nocc+1, 2*nbasis
                               tmp_t3c(a,b,c) = tmp_t3c(a,b,c) &
@@ -819,7 +834,8 @@ module ccsd
          end do
          !$omp end do
          !$omp end parallel
-         print*, e_T
+         sys%e_ccsd_t = e_T
+         write(iunit, '(1X, A, 1X, F15.9)') 'CCSD(T) correlation energy (Hartree):', e_T
          end associate
       end subroutine do_ccsd_t
 end module ccsd

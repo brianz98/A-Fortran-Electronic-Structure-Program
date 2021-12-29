@@ -86,8 +86,7 @@ module mp2
          type(system_t), intent(inout) :: sys
          type(int_store_t), intent(inout) :: int_store
 
-         real(dp), allocatable :: tmp_a(:,:,:,:)
-         real(dp), allocatable :: tmp_b(:,:,:,:) ! mixed integrals like (ij|rs)
+         real(dp), allocatable :: tmp_a(:,:,:,:), tmp_b(:,:,:,:)
          integer :: tmpdim, n, nocc
          integer :: i, j, k, l, p, q, r, s, a, b
          integer :: kl, ij, pq, rs, pqrs, s_up
@@ -108,18 +107,42 @@ module mp2
 
          allocate(int_store%eri_mo, mold=int_store%eri)
 
-         
          !$omp parallel default(none) &
          !$omp private(kl, ij, pq, rs, pqrs, s_up, ia, ja, jb, ib) &
          !$omp shared(sys, int_store, tmp_a, tmp_b, nocc, n)
          associate(C=>sys%canon_coeff, eri_mo=>int_store%eri_mo, eri=>int_store%eri)
          !$omp do schedule(dynamic, 2) collapse(2)
+
+         ! Naively (see above) we can perform the transformation of (ij|kl)->(pq|rs) in an O(N^8) loop:
+         ! do ijklpqrs
+         !     (pq|rs) = C_pi C_qj C_rk C_sl (ij|kl)
+         ! end do
+         !
+         ! But we can also, with the aid of two 4-dimensional temp matrices, perform 4 O(N^5) loops:
+         ! do ijklp
+         !     (pj|kl) (tmp_a) += (ij|kl) * C_pi
+         ! end do
+         ! do pjklq
+         !     (pq|kl) (tmp_b) += (pj|kl) (tmp_a) * C_qj
+         ! end do
+         ! do pqklr
+         !     (pq|rl) (tmp_a) += (pq|kl) (tmp_b) * C_rk
+         ! end do
+         ! do pqrls
+         !     (pq|rs) (tmp_b) += (pq|rl) (tmp_a) * C_sl
+         ! end do
+         !
+         ! One last loop to store in one dimensional array with perm. symmetry...
+
+         ! Notice the order of the loops are optimised for Fortran coloumn major array storage:
+         ! the first index varies the fastest etc.
+
          ! (ij|kl) -> (pj|kl)
-         do k = 1, n
-            do l = 1, n
+         do l = 1, n
+            do k = 1, n
                kl = eri_ind(k,l)
-               do j = 1, n
-                  do i = 1, n
+               do i = 1, n
+                  do j = 1, n
                      ij = eri_ind(i,j)
                      do p = 1, n
                         tmp_a(p,j,k,l) = tmp_a(p,j,k,l) + eri(eri_ind(ij,kl))*C(p,i)
@@ -132,12 +155,11 @@ module mp2
 
          !$omp do schedule(dynamic, 2) collapse(2)
          ! (pj|kl) -> (pq|kl)
-         do k = 1, n
-            do l = 1, n
-               kl = eri_ind(k,l)
-               do p = 1, n
-                  do j = 1, n
-                     do q = 1, n
+         do l = 1, n
+            do k = 1, n
+               do j = 1, n
+                  do q = 1, n
+                     do p = 1, n
                         tmp_b(p,q,k,l) = tmp_b(p,q,k,l) + tmp_a(p,j,k,l)*C(q,j)
                      end do 
                   end do
@@ -147,18 +169,16 @@ module mp2
          !$omp end do
 
          ! (pq|kl) -> (pq|rl)
-         !$omp master
+         !$omp single
          tmp_a(:,:,:,:) = 0.0_dp
-         !$omp end master
+         !$omp end single
 
          !$omp do schedule(dynamic, 2) collapse(2)
-         do p = 1, n
-            do q = 1, n
-               pq = eri_ind(p,q)
+         do l = 1, n
+            do r = 1, n
                do k = 1, n
-                  do l = 1, n
-                     kl = eri_ind(k,l)
-                     do r = 1, n
+                  do q = 1, n
+                     do p = 1, n
                         tmp_a(p,q,r,l) = tmp_a(p,q,r,l) + tmp_b(p,q,k,l)*C(r,k)
                      end do 
                   end do
@@ -168,17 +188,15 @@ module mp2
          !$omp end do
 
          ! (pq|rl) -> (pq|rs)
-         !$omp master
+         !$omp single
          tmp_b(:,:,:,:) = 0.0_dp
-         !$omp end master
+         !$omp end single
          !$omp do schedule(dynamic, 2) collapse(2)
-         do p = 1, n
-            do q = 1, n
-               pq = eri_ind(p,q)
-               do r = 1, n
-                  do l = 1, n
-                     do s = 1, n
-                        rs = eri_ind(r,s)
+         do s = 1, n
+            do r = 1, n
+               do l = 1, n
+                  do q = 1, n
+                     do p = 1, n
                         tmp_b(p,q,r,s) = tmp_b(p,q,r,s) + tmp_a(p,q,r,l)*C(s,l)
                      end do 
                   end do
@@ -187,7 +205,7 @@ module mp2
          end do
          !$omp end do
 
-         !$omp master
+         !$omp single
          pq = 0
          pqrs = 0
          do p = 1, n
@@ -203,12 +221,12 @@ module mp2
                   end if
                   do s = 1, s_up
                      pqrs = pqrs + 1
-                     eri_mo(pqrs) = tmp_b(p,q,r,s)
+                     eri_mo(pqrs) = tmp_b(s,r,q,p)
                   end do
                end do
             end do
          end do
-         !$omp end master
+         !$omp end single
          end associate
          !$omp end parallel
 
@@ -238,7 +256,5 @@ module mp2
          write(iunit, '(1X, A, 1X, F15.8)') 'MP2 correlation energy (Hartree):', sys%e_mp2
 
       end subroutine do_mp2
-         
-
 
 end module mp2
