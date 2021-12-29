@@ -22,3 +22,4 @@ The end goal of this project will be performing HF, MP2, CCSD, and CCSD(T), as p
 - [ ] Ditto for CCSD(T)
 - [ ] MPI parallelisation
 - [ ] GPU adaptation for MP2 and CCSD/(T)
+- [ ] User input file: level of theory, tolerances
