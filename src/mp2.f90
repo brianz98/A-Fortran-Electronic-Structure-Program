@@ -221,6 +221,7 @@ module mp2
                   end if
                   do s = 1, s_up
                      pqrs = pqrs + 1
+                     ! use full permutational symmetry to optimise cache behaviour
                      eri_mo(pqrs) = tmp_b(s,r,q,p)
                   end do
                end do

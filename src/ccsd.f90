@@ -400,13 +400,12 @@ module ccsd
             !$omp private(i,j,a,b,ia,ja,x) &
             !$omp shared(sys, cc_amp, cc_int) &
             !$omp schedule(dynamic, 2) collapse(2)
-            do i = 1, 2*nocc
+            do b = 2*nocc+1, 2*n
                do a = 2*nocc+1, 2*n
-                  ia = t_ia(i,a)
                   do j = 1, 2*nocc
                      ja = t_ia(j,a)
-                     do b = 2*nocc+1, 2*n
-                        x = ia*t_ia(j,b) - t_ia(i,b)*ja
+                     do i = 1, 2*nocc
+                        x = t_ia(i,a)*t_ia(j,b) - t_ia(i,b)*ja
                         tau_tilde(i,j,a,b) = t_ijab(i,j,a,b) + 0.5*x
                         tau(i,j,a,b) = tau_tilde(i,j,a,b) + 0.5*x
                      end do
@@ -527,9 +526,9 @@ module ccsd
                   do j = 1, 2*nocc
                      W_oooo(m,n,i,j) = asym(m,n,i,j)
                      do e = 2*nocc+1, 2*nbasis
-                        W_oooo(m,n,i,j) = W_oooo(m,n,i,j) + t_ia(j,e)*asym(m,n,i,e) - t_ia(i,e)*asym(m,n,j,e)
+                        W_oooo(m,n,i,j) = W_oooo(m,n,i,j) + t_ia(j,e)*asym(m,n,i,e) + t_ia(i,e)*asym(e,j,m,n)
                         do f = 2*nocc+1, 2*nbasis
-                           W_oooo(m,n,i,j) = W_oooo(m,n,i,j) + 0.5*t_ijab(i,j,e,f)*asym(m,n,e,f)
+                           W_oooo(m,n,i,j) = W_oooo(m,n,i,j) - 0.5*t_ijab(i,j,e,f)*asym(f,e,m,n)
                         end do
                      end do
                   end do
@@ -540,13 +539,13 @@ module ccsd
 
          ! [TODO]: make a switch to on-the-fly W_vvvv computation, for when memory is limited
          !$omp do schedule(dynamic, 2) collapse(4)
-         do a = 2*nocc+1, 2*nbasis
-            do b = 2*nocc+1, 2*nbasis
-               do e = 2*nocc+1, 2*nbasis
-                  do f = 2*nocc+1, 2*nbasis
+         do f = 2*nocc+1, 2*nbasis
+            do e = 2*nocc+1, 2*nbasis
+               do b = 2*nocc+1, 2*nbasis
+                  do a = 2*nocc+1, 2*nbasis
                      W_vvvv(a,b,e,f) = asym(a,b,e,f)
                      do n = 1, 2*nocc
-                        W_vvvv(a,b,e,f) = W_vvvv(a,b,e,f) - t_ia(n,b)*asym(a,n,e,f) + t_ia(n,a)*asym(b,n,e,f)
+                        W_vvvv(a,b,e,f) = W_vvvv(a,b,e,f) + t_ia(n,b)*asym(n,a,e,f) - t_ia(n,a)*asym(n,b,e,f)
                      end do
                   end do
                end do
@@ -561,14 +560,14 @@ module ccsd
                   do j = 1, 2*nocc
                      W_ovvo(m,b,e,j) = asym(m,b,e,j)
                      do f = 2*nocc+1, 2*nbasis
-                        W_ovvo(m,b,e,j) = W_ovvo(m,b,e,j) + t_ia(j,f)*asym(m,b,e,f)
+                        W_ovvo(m,b,e,j) = W_ovvo(m,b,e,j) - t_ia(j,f)*asym(f,e,m,b)
                      end do
 
                      do n = 1, 2*nocc
                         x = t_ia(n,b)
                         W_ovvo(m,b,e,j) = W_ovvo(m,b,e,j) - x*asym(m,n,e,j)
                         do f = 2*nocc+1, 2*nbasis
-                           W_ovvo(m,b,e,j) = W_ovvo(m,b,e,j) - (0.5*t_ijab(j,n,f,b) + x*t_ia(j,f)) * asym(m,n,e,f)
+                           W_ovvo(m,b,e,j) = W_ovvo(m,b,e,j) - (0.5*t_ijab(j,n,f,b) - x*t_ia(j,f)) * asym(f,e,m,n)
                         end do
                      end do
                   end do
@@ -622,7 +621,7 @@ module ccsd
                   do e = 2*nocc+1, 2*nbasis
                      tmp_t1(i,a) = tmp_t1(i,a) + t2(i,m,a,e)*F_ov(m,e)
                      do f = 2*nocc+1, 2*nbasis
-                        tmp_t1(i,a) = tmp_t1(i,a) - 0.5*t2(i,m,e,f)*asym(m,a,e,f)
+                        tmp_t1(i,a) = tmp_t1(i,a) + 0.5*t2(i,m,e,f)*asym(f,e,m,a)
                      end do
                      do n = 1, 2*nocc
                         tmp_t1(i,a) = tmp_t1(i,a) - 0.5*t2(m,n,a,e)*asym(n,m,e,i)
@@ -678,10 +677,10 @@ module ccsd
                      do m = 1, 2*nocc
                         do e = 2*nocc+1, 2*nbasis
                            tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) &
-                           + t2(i,m,a,e)*W_ovvo(m,b,e,j) - tmp_t1(i,e)*tmp_t1(m,a)*asym(m,b,e,j)&
-                           - t2(j,m,a,e)*W_ovvo(m,b,e,i) + tmp_t1(j,e)*tmp_t1(m,a)*asym(m,b,e,i)&
-                           - t2(i,m,b,e)*W_ovvo(m,a,e,j) + tmp_t1(i,e)*tmp_t1(m,b)*asym(m,a,e,j)&
-                           + t2(j,m,b,e)*W_ovvo(m,a,e,i) - tmp_t1(j,e)*tmp_t1(m,b)*asym(m,a,e,i)
+                           + t2(i,m,a,e)*W_ovvo(m,b,e,j) - tmp_t1(i,e)*tmp_t1(m,a)*asym(e,j,m,b)&
+                           - t2(j,m,a,e)*W_ovvo(m,b,e,i) + tmp_t1(j,e)*tmp_t1(m,a)*asym(e,i,m,b)&
+                           - t2(i,m,b,e)*W_ovvo(m,a,e,j) + tmp_t1(i,e)*tmp_t1(m,b)*asym(e,j,m,a)&
+                           + t2(j,m,b,e)*W_ovvo(m,a,e,i) - tmp_t1(j,e)*tmp_t1(m,b)*asym(e,i,m,a)
                         end do 
                      end do
                   end do
@@ -728,10 +727,10 @@ module ccsd
             ecc = 0.0_p
             rmst2 = 0.0_p
             !$omp do schedule(dynamic, 2) collapse(4) reduction(+:ecc,rmst2)
-            do i = 1, 2*nocc
-               do j = 1, 2*nocc
-                  do a = 2*nocc+1, 2*nbasis
-                     do b = 2*nocc+1, 2*nbasis
+            do b = 2*nocc+1, 2*nbasis
+               do a = 2*nocc+1, 2*nbasis
+                  do j = 1, 2*nocc
+                     do i = 1, 2*nocc
                         ecc = ecc + 0.25*asym(i,j,a,b)*(t2(i,j,a,b)+2*t1(i,a)*t1(j,b))
                         ! We only do the RMS on T2 amplitudes
                         rmst2 = rmst2 + (t2(i,j,a,b)-st%t2_old(i,j,a,b))**2
@@ -802,9 +801,9 @@ module ccsd
                         do c = 2*nocc+1, 2*nbasis
                            ! Disonnected T3: D_{ijk}^{abc}*t_{ijk}^{abc}(d) = P(i/jk)P(a/bc)t_i^a*<jk||bc>
                            ! Can be rewritten directly as no sums in the expression
-                           tmp_t3d(a,b,c) = t1(i,a)*asym(j,k,b,c) - t1(j,a)*asym(i,k,b,c) - t1(k,a)*asym(j,i,b,c) &
-                                          - t1(i,b)*asym(j,k,a,c) + t1(j,b)*asym(i,k,a,c) + t1(k,b)*asym(j,i,a,c) &
-                                          - t1(i,c)*asym(j,k,b,a) + t1(j,c)*asym(i,k,b,a) + t1(k,c)*asym(j,i,b,a)
+                           tmp_t3d(a,b,c) = - t1(i,a)*asym(c,b,j,k) + t1(j,a)*asym(c,b,i,k) + t1(k,a)*asym(c,b,j,i) &
+                                            + t1(i,b)*asym(c,a,j,k) - t1(j,b)*asym(c,a,i,k) - t1(k,b)*asym(c,a,j,i) &
+                                            - t1(i,c)*asym(j,k,b,a) + t1(j,c)*asym(i,k,b,a) + t1(k,c)*asym(j,i,b,a)
                            tmp_t3d(a,b,c) = tmp_t3d(a,b,c)/(e(i)+e(j)+e(k)-e(a)-e(b)-e(c))               
 
                            ! Connected T3: D_{ijk}^{abc}*t_{ijk}^{abc}(c) = P(i/jk)P(a/bc)[\sum_f t_jk^af <fi||bc> - \sum_m t_im^bc <ma||jk>]
