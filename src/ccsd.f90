@@ -57,7 +57,7 @@ module ccsd
          ! [TODO]: closed-shell (spatial) formulation of Hirata, S.; Podeszwa, R.; Tobita, M.; Bartlett, R. J. J. Chem. Phys. 2004, 120 (6), 2581 (https://doi.org/10.1063/1.1637577)
 
          use integrals, only: int_store_t, eri_ind
-         use error_handling, only: check_allocate
+         use error_handling, only: error, check_allocate
          use system, only: state_t
 
          type(system_t), intent(inout) :: sys
@@ -65,6 +65,8 @@ module ccsd
          integer :: i, j, a, b, p, q, r, s
          integer :: pr, qr, pa, pb, qa, qb, ra, rb, sa, sb
          real(dp) :: prqs, psqr
+         real(dp) :: err
+         integer(kind=8) :: c_max, c_rate, t0, t1
 
          type(state_t) :: st
          type(diis_cc_t) :: diis
@@ -86,10 +88,9 @@ module ccsd
          ! where <pq|rs> = (pr|qs) * delta(sigma_p,sigma_r) * delta(sigma_q,sigma_s)
          ! #############################################################################
          write(iunit, '(1X, A)') 'Forming antisymmetrised spinorbital ERIs...'
+         call system_clock(count=t0, count_rate=c_rate, count_max=c_max)
          allocate(int_store%asym_spinorb(sys%nbasis*2,sys%nbasis*2,sys%nbasis*2,sys%nbasis*2), source=0.0_dp, stat=ierr)
          call check_allocate('int_store%asym_spinorb', sys%nbasis**4*16, ierr)
-
-         call init_diis_cc_t(sys, diis)
 
          associate(n=>sys%nbasis, asym=>int_store%asym_spinorb, eri=>int_store%eri_mo)
          ! [TODO]: this isn't necessary but easier for debugging, change to spin lookup arrays or something similar
@@ -125,13 +126,51 @@ module ccsd
             end do
          end do
          end associate
+         call system_clock(t1)
+         if (t1<t0) t1 = t1+c_max
+         write(iunit, '(1X, A, 1X, F8.6, A)') 'Time taken:', real(t1-t0, kind=dp)/c_rate, " s"
+         write(iunit, *)
+         t0=t1         
+
+         write(iunit, '(1X, A)') 'Checking that the permuational symmetry of the antisymmetrised integrals hold...'
+         err = 0.0_dp
+         associate(nbasis=>sys%nbasis, asym=>int_store%asym_spinorb)
+         do p = 1, 2*nbasis
+            do q = 1, p
+               do r = 1, p
+                  do s = 1, min(r,p)
+                     err = err + abs(asym(p,q,r,s) + asym(p,q,s,r)) + abs(asym(p,q,r,s) - asym(r,s,p,q)) &
+                               + abs(asym(p,q,r,s) + asym(s,r,p,q)) + abs(asym(p,q,r,s) - asym(s,r,q,p))
+                  end do
+               end do
+            end do
+         end do
+         end associate
+
+         if (err > depsilon) then
+            write(iunit, '(1X, A, 1X, E15.6)') 'Permutational symmetry error:', err
+            call error('ccsd::do_ccsd', 'Permutational symmetry of antisymmetrised integrals does not hold')
+         end if
+
+         call system_clock(t1)
+         if (t1<t0) t1 = t1+c_max
+         write(iunit, '(1X, A, 1X, F8.6, A)') 'Time taken:', real(t1-t0, kind=dp)/c_rate, " s"
+         write(iunit, *)
+         t0=t1
 
          ! ############################################
          ! Initialise intermediate arrays and DIIS data
          ! ############################################
+         write(iunit, '(1X, A)') 'Initialise CC intermediate tensors and DIIS auxilliary arrays...'
          call init_cc(sys, int_store, cc_amp, cc_int)
          allocate(st%t2_old, source=cc_amp%t_ijab)
          call init_diis_cc_t(sys, diis)
+
+         call system_clock(t1)
+         if (t1<t0) t1 = t1+c_max
+         write(iunit, '(1X, A, 1X, F8.6, A)') 'Time taken:', real(t1-t0, kind=dp)/c_rate, " s"
+         write(iunit, *)
+         t0=t1
 
          write(iunit, '(1X, A)') 'Initialisation done, now entering iterative CC solver...'
 
@@ -146,8 +185,9 @@ module ccsd
             call build_W(sys, cc_int, cc_amp, asym)
 
             ! CC amplitude equations
-            call update_amplitudes(sys, cc_amp, int_store, cc_int)        
+            call update_amplitudes(sys, cc_amp, int_store, cc_int)
             call update_cc_energy(sys, st, int_store, cc_amp, conv)
+            
             if (conv) then
                write(iunit, '(1X, A)') 'Convergence reached within tolerance.'
                write(iunit, '(1X, A, 1X, F15.8)') 'Final CCSD Energy (Hartree):', st%energy
@@ -158,8 +198,11 @@ module ccsd
                call move_alloc(cc_amp%t_ijab, sys%t2)
                exit
             end if
-            write(iunit, '(1X, A, 1X, I3, 1X, F15.8)') 'Iteration', iter, st%energy
             call update_diis_cc(diis, cc_amp)
+
+            call system_clock(t1)
+            write(iunit, '(1X, A, 1X, I2, 2X, F10.7, 2X, F8.6, 1X, A)') 'Iteration', iter, st%energy,real(t1-t0, kind=dp)/c_rate,'s'
+            t0=t1
          end do
          end associate
 
@@ -450,9 +493,9 @@ module ccsd
             do e = 2*nocc+1, 2*nbasis
                do m = 1, 2*nocc
                   do f = 2*nocc+1, 2*nbasis
-                     F_vv(a,e) = F_vv(a,e) + t_ia(m,f) * asym(m,a,f,e)
+                     F_vv(a,e) = F_vv(a,e) + t_ia(m,f) * asym(f,e,m,a)
                      do n = 1, 2*nocc
-                        F_vv(a,e) = F_vv(a,e) - 0.5*tau_tilde(m,n,a,f)*asym(m,n,e,f)
+                        F_vv(a,e) = F_vv(a,e) + 0.5*tau_tilde(m,n,a,f)*asym(n,m,e,f)
                      end do
                   end do
                end do
@@ -466,9 +509,9 @@ module ccsd
             do i = 1, 2*nocc
                do e = 2*nocc+1, 2*nbasis
                   do n = 1, 2*nocc
-                     F_oo(m,i) = F_oo(m,i) + t_ia(n,e)*asym(m,n,i,e)
+                     F_oo(m,i) = F_oo(m,i) - t_ia(n,e)*asym(n,m,i,e)
                      do f = 2*nocc+1, 2*nbasis
-                        F_oo(m,i) = F_oo(m,i) + 0.5*tau_tilde(i,n,e,f)*asym(m,n,e,f)
+                        F_oo(m,i) = F_oo(m,i) - 0.5*tau_tilde(i,n,e,f)*asym(f,e,m,n)
                      end do
                   end do
                end do
@@ -482,7 +525,7 @@ module ccsd
             do e = 2*nocc+1, 2*nbasis
                do n = 1, 2*nocc
                   do f = 2*nocc+1, 2*nbasis
-                     F_ov(m,e) = F_ov(m,e) + t_ia(n,f)*asym(m,n,e,f)
+                     F_ov(m,e) = F_ov(m,e) + t_ia(n,f)*asym(f,e,n,m)
                   end do
                end do
             end do
@@ -526,7 +569,7 @@ module ccsd
                   do j = 1, 2*nocc
                      W_oooo(m,n,i,j) = asym(m,n,i,j)
                      do e = 2*nocc+1, 2*nbasis
-                        W_oooo(m,n,i,j) = W_oooo(m,n,i,j) + t_ia(j,e)*asym(m,n,i,e) + t_ia(i,e)*asym(e,j,m,n)
+                        W_oooo(m,n,i,j) = W_oooo(m,n,i,j) + t_ia(j,e)*asym(e,i,n,m) - t_ia(i,e)*asym(e,j,n,m)
                         do f = 2*nocc+1, 2*nbasis
                            W_oooo(m,n,i,j) = W_oooo(m,n,i,j) - 0.5*t_ijab(i,j,e,f)*asym(f,e,m,n)
                         end do
@@ -554,10 +597,10 @@ module ccsd
          !$omp end do
 
          !$omp do schedule(dynamic, 2) collapse(4)
-         do m = 1, 2*nocc
-            do b = 2*nocc+1, 2*nbasis
-               do e = 2*nocc+1, 2*nbasis
-                  do j = 1, 2*nocc
+         do j = 1, 2*nocc
+            do e = 2*nocc+1, 2*nbasis
+               do b = 2*nocc+1, 2*nbasis
+                  do m = 1, 2*nocc
                      W_ovvo(m,b,e,j) = asym(m,b,e,j)
                      do f = 2*nocc+1, 2*nbasis
                         W_ovvo(m,b,e,j) = W_ovvo(m,b,e,j) - t_ia(j,f)*asym(f,e,m,b)
@@ -565,9 +608,9 @@ module ccsd
 
                      do n = 1, 2*nocc
                         x = t_ia(n,b)
-                        W_ovvo(m,b,e,j) = W_ovvo(m,b,e,j) - x*asym(m,n,e,j)
+                        W_ovvo(m,b,e,j) = W_ovvo(m,b,e,j) + x*asym(n,m,e,j)
                         do f = 2*nocc+1, 2*nbasis
-                           W_ovvo(m,b,e,j) = W_ovvo(m,b,e,j) - (0.5*t_ijab(j,n,f,b) - x*t_ia(j,f)) * asym(f,e,m,n)
+                           W_ovvo(m,b,e,j) = W_ovvo(m,b,e,j) - (0.5*t_ijab(j,n,f,b) + x*t_ia(j,f)) * asym(f,e,n,m)
                         end do
                      end do
                   end do
