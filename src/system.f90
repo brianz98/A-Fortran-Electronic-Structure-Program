@@ -3,6 +3,10 @@ module system
    
    implicit none
 
+   enum, bind(c)
+      enumerator :: RHF, UHF, MP2_spinorb, MP2_spatial, CCSD_spinorb, CCSD_spatial, CCSD_T_spinorb, CCSD_T_spatial
+   end enum
+
    type system_t
       ! Basic system information
       integer :: nel = 0
@@ -35,7 +39,7 @@ module system
       real(p) :: ccsd_t_tol = 1e-6
 
       ! Level of theory (up to)
-      character(:), allocatable :: calc_type
+      integer :: calc_type
 
    end type system_t
 
@@ -75,8 +79,29 @@ module system
 
            close(ir)
 
-           sys%calc_type = trim(calc_type); sys%scf_e_tol = scf_e_tol; sys%scf_d_tol = scf_d_tol
+           sys%scf_e_tol = scf_e_tol; sys%scf_d_tol = scf_d_tol
            sys%ccsd_e_tol = ccsd_e_tol; sys%ccsd_t_tol = ccsd_t_tol
+
+           select case(trim(calc_type))
+                case("RHF")
+                    sys%calc_type = RHF
+                case("UHF")
+                    sys%calc_type = UHF
+                case("MP2_spinorb")
+                    sys%calc_type = MP2_spinorb
+                case("MP2_spatial")
+                    sys%calc_type = MP2_spatial
+                case("CCSD_spinorb")
+                    sys%calc_type = CCSD_spinorb
+                case("CCSD_spatial")
+                    sys%calc_type = CCSD_spatial
+                case("CCSD(T)_spinorb")
+                    sys%calc_type = CCSD_T_spinorb
+                case("CCSD(T)_spatial")
+                    sys%calc_type = CCSD_T_spatial
+                case default
+                    call error('system::read_system_in', 'Unrecognised calculation type!')
+           end select
 
         end subroutine
 

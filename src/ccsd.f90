@@ -52,7 +52,7 @@ module ccsd
    
    contains
 
-      subroutine do_ccsd(sys, int_store)
+      subroutine do_ccsd_spinorb(sys, int_store)
          ! This is the spinorbital formulation of J.F. Stanton, J. Gauss, J.D. Watts, and R.J. Bartlett, J. Chem. Phys. volume 94, pp. 4334-4345 (1991) (https://doi.org/10.1063/1.460620)
          ! [TODO]: closed-shell (spatial) formulation of Hirata, S.; Podeszwa, R.; Tobita, M.; Bartlett, R. J. J. Chem. Phys. 2004, 120 (6), 2581 (https://doi.org/10.1063/1.1637577)
 
@@ -211,7 +211,169 @@ module ccsd
          call deallocate_cc_int_t(cc_int)
          call deallocate_diis_cc_t(diis)
 
-      end subroutine do_ccsd
+      end subroutine do_ccsd_spinorb
+
+      subroutine do_ccsd_spatial(sys, int_store)
+         ! This is the spinorbital formulation of J.F. Stanton, J. Gauss, J.D. Watts, and R.J. Bartlett, J. Chem. Phys. volume 94, pp. 4334-4345 (1991) (https://doi.org/10.1063/1.460620)
+         ! [TODO]: closed-shell (spatial) formulation of Hirata, S.; Podeszwa, R.; Tobita, M.; Bartlett, R. J. J. Chem. Phys. 2004, 120 (6), 2581 (https://doi.org/10.1063/1.1637577)
+
+         use integrals, only: int_store_t, eri_ind
+         use error_handling, only: error, check_allocate
+         use system, only: state_t
+
+         type(system_t), intent(inout) :: sys
+         type(int_store_t), intent(inout) :: int_store
+         integer :: i, j, a, b, p, q, r, s
+         integer :: pr, qr, pa, pb, qa, qb, ra, rb, sa, sb
+         real(dp) :: prqs, psqr
+         real(dp) :: err
+         integer(kind=8) :: c_max, c_rate, t0, t1
+
+         type(state_t) :: st
+         type(diis_cc_t) :: diis
+         
+         type(cc_amp_t) :: cc_amp
+         integer :: ierr, iter
+         integer, parameter :: iunit = 6
+         integer, parameter :: maxiter = 100
+
+         type(cc_int_t) :: cc_int
+         logical :: conv
+
+         write(iunit, '(1X, 10("-"))')
+         write(iunit, '(1X, A)') 'CCSD'
+         write(iunit, '(1X, 10("-"))')
+
+         ! #############################################################################
+         ! Form the antisymmetrised spinorbital basis ERIs: <pq||rs> = <pq|rs> - <pq|sr>
+         ! where <pq|rs> = (pr|qs) * delta(sigma_p,sigma_r) * delta(sigma_q,sigma_s)
+         ! #############################################################################
+         write(iunit, '(1X, A)') 'Forming antisymmetrised spinorbital ERIs...'
+         call system_clock(count=t0, count_rate=c_rate, count_max=c_max)
+         allocate(int_store%asym_spinorb(sys%nbasis*2,sys%nbasis*2,sys%nbasis*2,sys%nbasis*2), source=0.0_dp, stat=ierr)
+         call check_allocate('int_store%asym_spinorb', sys%nbasis**4*16, ierr)
+
+         associate(n=>sys%nbasis, asym=>int_store%asym_spinorb, eri=>int_store%eri_mo)
+         ! [TODO]: this isn't necessary but easier for debugging, change to spin lookup arrays or something similar
+         do p = 1, n
+            pa = 2*p-1
+            pb = pa+1
+
+            do q = 1, n
+               qa = 2*q-1
+               qb = qa+1
+
+               do r = 1, n
+                  ra = 2*r-1
+                  rb = ra+1
+
+                  pr = eri_ind(p,r)
+                  qr = eri_ind(q,r)
+
+                  do s = 1, n
+                     sa = 2*s-1
+                     sb = sa+1
+                     prqs = eri(eri_ind(pr,eri_ind(q,s)))
+                     psqr = eri(eri_ind(eri_ind(p,s),qr))
+                     ! Draw a spin decision tree to visualise
+                     asym(pa,qa,ra,sa) = prqs-psqr
+                     asym(pb,qb,rb,sb) = prqs-psqr
+                     asym(pa,qb,ra,sb) = prqs
+                     asym(pb,qa,rb,sa) = prqs
+                     asym(pa,qb,rb,sa) = -psqr
+                     asym(pb,qa,ra,sb) = -psqr
+                  end do
+               end do
+            end do
+         end do
+         end associate
+         call system_clock(t1)
+         if (t1<t0) t1 = t1+c_max
+         write(iunit, '(1X, A, 1X, F8.6, A)') 'Time taken:', real(t1-t0, kind=dp)/c_rate, " s"
+         write(iunit, *)
+         t0=t1         
+
+         write(iunit, '(1X, A)') 'Checking that the permuational symmetry of the antisymmetrised integrals hold...'
+         err = 0.0_dp
+         associate(nbasis=>sys%nbasis, asym=>int_store%asym_spinorb)
+         do p = 1, 2*nbasis
+            do q = 1, p
+               do r = 1, p
+                  do s = 1, min(r,p)
+                     err = err + abs(asym(p,q,r,s) + asym(p,q,s,r)) + abs(asym(p,q,r,s) - asym(r,s,p,q)) &
+                               + abs(asym(p,q,r,s) + asym(s,r,p,q)) + abs(asym(p,q,r,s) - asym(s,r,q,p))
+                  end do
+               end do
+            end do
+         end do
+         end associate
+
+         if (err > depsilon) then
+            write(iunit, '(1X, A, 1X, E15.6)') 'Permutational symmetry error:', err
+            call error('ccsd::do_ccsd', 'Permutational symmetry of antisymmetrised integrals does not hold')
+         end if
+
+         call system_clock(t1)
+         if (t1<t0) t1 = t1+c_max
+         write(iunit, '(1X, A, 1X, F8.6, A)') 'Time taken:', real(t1-t0, kind=dp)/c_rate, " s"
+         write(iunit, *)
+         t0=t1
+
+         ! ############################################
+         ! Initialise intermediate arrays and DIIS data
+         ! ############################################
+         write(iunit, '(1X, A)') 'Initialise CC intermediate tensors and DIIS auxilliary arrays...'
+         call init_cc(sys, int_store, cc_amp, cc_int)
+         allocate(st%t2_old, source=cc_amp%t_ijab)
+         call init_diis_cc_t(sys, diis)
+
+         call system_clock(t1)
+         if (t1<t0) t1 = t1+c_max
+         write(iunit, '(1X, A, 1X, F8.6, A)') 'Time taken:', real(t1-t0, kind=dp)/c_rate, " s"
+         write(iunit, *)
+         t0=t1
+
+         write(iunit, '(1X, A)') 'Initialisation done, now entering iterative CC solver...'
+
+         ! ###################
+         ! Iterative CC solver
+         ! ###################
+         associate(nbasis=>sys%nbasis, nocc=>sys%nocc, t_ia=>cc_amp%t_ia, t_ijab=>cc_amp%t_ijab, asym=>int_store%asym_spinorb)
+         do iter = 1, maxiter
+            ! Update intermediate tensors
+            call build_tau(sys, cc_amp, cc_int)
+            call build_F(sys, cc_int, cc_amp, asym)
+            call build_W(sys, cc_int, cc_amp, asym)
+
+            ! CC amplitude equations
+            call update_amplitudes(sys, cc_amp, int_store, cc_int)
+            call update_cc_energy(sys, st, int_store, cc_amp, conv)
+            
+            if (conv) then
+               write(iunit, '(1X, A)') 'Convergence reached within tolerance.'
+               write(iunit, '(1X, A, 1X, F15.8)') 'Final CCSD Energy (Hartree):', st%energy
+
+               ! Copied for return 
+               sys%e_ccsd = st%energy
+               call move_alloc(cc_amp%t_ia, sys%t1)
+               call move_alloc(cc_amp%t_ijab, sys%t2)
+               exit
+            end if
+            call update_diis_cc(diis, cc_amp)
+
+            call system_clock(t1)
+            write(iunit, '(1X, A, 1X, I2, 2X, F10.7, 2X, F8.6, 1X, A)') 'Iteration', iter, st%energy,real(t1-t0, kind=dp)/c_rate,'s'
+            t0=t1
+         end do
+         end associate
+
+         ! Nonlazy deallocations
+         deallocate(st%t2_old)
+         call deallocate_cc_int_t(cc_int)
+         call deallocate_diis_cc_t(diis)
+
+
+      end subroutine do_ccsd_spatial
 
       subroutine init_cc(sys, int_store, cc_amp, cc_int)
          ! Initialise many CC related quantities.
@@ -792,7 +954,7 @@ module ccsd
 
       end subroutine update_cc_energy
 
-      subroutine do_ccsd_t(sys, int_store)
+      subroutine do_ccsd_t_spinorb(sys, int_store)
          ! Spinorbital formuation of CCSD(T)
          ! In:
          !     int_store: integral information.
@@ -879,5 +1041,95 @@ module ccsd
          sys%e_ccsd_t = e_T
          write(iunit, '(1X, A, 1X, F15.9)') 'CCSD(T) correlation energy (Hartree):', e_T
          end associate
-      end subroutine do_ccsd_t
+      end subroutine do_ccsd_t_spinorb
+
+      subroutine do_ccsd_t_spatial(sys, int_store)
+         ! Spinorbital formuation of CCSD(T)
+         ! In:
+         !     int_store: integral information.
+         ! In/out:
+         !     sys: holds converged amplitudes from CCSD
+
+         use integrals, only: int_store_t
+         use error_handling, only: check_allocate
+
+         type(system_t), intent(inout) :: sys
+         type(int_store_t), intent(in) :: int_store
+
+         integer :: i, j, k, a, b, c, f, m, ierr
+         real(p), allocatable :: tmp_t3d(:,:,:), tmp_t3c(:,:,:), tmp_t3c_d(:,:,:)
+         real(p) :: e_T
+         integer, parameter :: iunit = 6
+
+         write(iunit, '(1X, 10("-"))')
+         write(iunit, '(1X, A)') 'CCSD(T)'
+         write(iunit, '(1X, 10("-"))')
+
+         associate(nbasis=>sys%nbasis, nocc=>sys%nocc, e=>sys%canon_levels_spinorb, t1=>sys%t1, t2=>sys%t2,&
+                   asym=>int_store%asym_spinorb)
+         !$omp parallel default(none) &
+         !$omp private(i, j, k, a, b, c, f, m, tmp_t3d, tmp_t3c, tmp_t3c_d, ierr) &
+         !$omp shared(sys, int_store, e_T)
+         e_T = 0.0_p
+         
+         ! Declare heap-allocated arrays inside parallel region
+         allocate(tmp_t3d(2*nocc+1:2*nbasis,2*nocc+1:2*nbasis,2*nocc+1:2*nbasis), source=0.0_p, stat=ierr)
+         call check_allocate('tmp_t3d', 8*(nbasis-nocc)**3, ierr)
+         allocate(tmp_t3c(2*nocc+1:2*nbasis,2*nocc+1:2*nbasis,2*nocc+1:2*nbasis), source=0.0_p, stat=ierr)
+         call check_allocate('tmp_t3c', 8*(nbasis-nocc)**3, ierr)
+         allocate(tmp_t3c_d(2*nocc+1:2*nbasis,2*nocc+1:2*nbasis,2*nocc+1:2*nbasis), source=0.0_p, stat=ierr)
+         call check_allocate('tmp_t3c_d', 8*(nbasis-nocc)**3, ierr)
+
+         ! We use avoid the storage of full triples (six-dimensional array..) and instead use the strategy of 
+         ! batched triples storage, denoted W^{ijk}(abc) in (https://doi.org/10.1016/0009-2614(91)87003-T).
+         ! We could of course only compute one element in a loop iteration but that will probably result in bad floating point
+         ! performance, here for each thread/loop iteration we use the Fortran intrinsic sum, 
+         ! instead of all relying on OMP reduction, to hopefully give better floating point performance.
+         !$omp do schedule(runtime) collapse(3) reduction(+:e_T)
+         do i = 1, 2*nocc
+            do j = 1, 2*nocc
+               do k = 1, 2*nocc
+                  ! Compute T3 amplitudes                  
+                  do a = 2*nocc+1, 2*nbasis
+                     do b = 2*nocc+1, 2*nbasis
+                        do c = 2*nocc+1, 2*nbasis
+                           ! Disonnected T3: D_{ijk}^{abc}*t_{ijk}^{abc}(d) = P(i/jk)P(a/bc)t_i^a*<jk||bc>
+                           ! Can be rewritten directly as no sums in the expression
+                           tmp_t3d(a,b,c) = - t1(i,a)*asym(c,b,j,k) + t1(j,a)*asym(c,b,i,k) + t1(k,a)*asym(c,b,j,i) &
+                                            + t1(i,b)*asym(c,a,j,k) - t1(j,b)*asym(c,a,i,k) - t1(k,b)*asym(c,a,j,i) &
+                                            - t1(i,c)*asym(j,k,b,a) + t1(j,c)*asym(i,k,b,a) + t1(k,c)*asym(j,i,b,a)
+                           tmp_t3d(a,b,c) = tmp_t3d(a,b,c)/(e(i)+e(j)+e(k)-e(a)-e(b)-e(c))               
+
+                           ! Connected T3: D_{ijk}^{abc}*t_{ijk}^{abc}(c) = P(i/jk)P(a/bc)[\sum_f t_jk^af <fi||bc> - \sum_m t_im^bc <ma||jk>]
+                           ! Has to be zeroed as all terms are sums
+                           tmp_t3c(a,b,c) = 0.0_p
+                           do f = 2*nocc+1, 2*nbasis
+                              tmp_t3c(a,b,c) = tmp_t3c(a,b,c) &
+                                             + t2(k,j,f,a)*asym(f,i,b,c) - t2(k,i,f,a)*asym(f,j,b,c) - t2(i,j,f,a)*asym(f,k,b,c) &
+                                             - t2(k,j,f,b)*asym(f,i,a,c) + t2(k,i,f,b)*asym(f,j,a,c) + t2(i,j,f,b)*asym(f,k,a,c) &
+                                             - t2(k,j,f,c)*asym(f,i,b,a) + t2(k,i,f,c)*asym(f,j,b,a) + t2(i,j,f,c)*asym(f,k,b,a)
+                           end do
+                           do m = 1, 2*nocc
+                              tmp_t3c(a,b,c) = tmp_t3c(a,b,c) &
+                                             - t2(m,i,c,b)*asym(m,a,j,k) + t2(m,j,c,b)*asym(m,a,i,k) + t2(m,k,c,b)*asym(m,a,j,i) &
+                                             + t2(m,i,c,a)*asym(m,b,j,k) - t2(m,j,c,a)*asym(m,b,i,k) - t2(m,k,c,a)*asym(m,b,j,i) &
+                                             + t2(m,i,a,b)*asym(m,c,j,k) - t2(m,j,a,b)*asym(m,c,i,k) - t2(m,k,a,b)*asym(m,c,j,i)
+                           end do
+                           tmp_t3c_d(a,b,c) = tmp_t3c(a,b,c)/(e(i)+e(j)+e(k)-e(a)-e(b)-e(c))
+                        end do
+                     end do
+                  end do
+                  
+                  ! Calculate contributions
+                  e_T = e_T + sum(tmp_t3c*(tmp_t3c_d+tmp_t3d))/36
+               end do
+            end do
+         end do
+         !$omp end do
+         !$omp end parallel
+         sys%e_ccsd_t = e_T
+         write(iunit, '(1X, A, 1X, F15.9)') 'CCSD(T) correlation energy (Hartree):', e_T
+         end associate
+      end subroutine do_ccsd_t_spatial
+
 end module ccsd

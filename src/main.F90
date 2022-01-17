@@ -4,10 +4,11 @@ program main
     use omp_lib
     use integrals, only: read_integrals_in, print_sys_info, int_store_t
     use system, only: system_t, read_system_in
-    use hf, only: do_hartree_fock
+    use system, only: RHF, UHF, MP2_spinorb, MP2_spatial, CCSD_spinorb, CCSD_spatial, CCSD_T_spinorb, CCSD_T_spatial
+    use hf, only: do_rhf, do_uhf
     use geometry, only: read_geometry_in
-    use mp2, only: do_mp2
-    use ccsd, only: do_ccsd, do_ccsd_t
+    use mp2, only: do_mp2_spinorb, do_mp2_spatial
+    use ccsd, only: do_ccsd_spinorb, do_ccsd_spatial, do_ccsd_t_spinorb, do_ccsd_t_spatial
 
     implicit none
 
@@ -34,34 +35,75 @@ program main
     call read_integrals_in(sys, int_store)
     call read_geometry_in(sys, int_store)
     call print_sys_info(sys, int_store)
+
     call system_clock(t1)
     if (t1<t0) t1 = t1+count_max ! Moving time blocks, see system_clock documentation
     write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for system initialisation:', real(t1-t0)/count_rate, "s"
     t0=t1
 
-    call do_hartree_fock(sys, int_store)
-    call system_clock(t1)
-    if (t1<t0) t1 = t1+count_max
-    write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for Hartree-Fock:', real(t1-t0)/count_rate, "s"
-    t0=t1
+    
+    associate(ct=>sys%calc_type)
+    if (any((/ct==MP2_spinorb, ct==CCSD_spinorb, ct==CCSD_T_spinorb/))) then
+        ! Currently UHF is not implemented, so we convert spatial HF orbitals into spinorbitals
+        call do_rhf(sys, int_store)
+        call system_clock(t1)
+        if (t1<t0) t1 = t1+count_max
+        write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for restricted Hartree-Fock:', real(t1-t0)/count_rate, "s"
+        t0=t1
 
-    call do_mp2(sys, int_store)
-    call system_clock(t1)
-    if (t1<t0) t1 = t1+count_max
-    write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for MP2:', real(t1-t0)/count_rate, "s"
-    t0=t1
+        call do_mp2_spinorb(sys, int_store)
+        call system_clock(t1)
+        if (t1<t0) t1 = t1+count_max
+        write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for UMP2:', real(t1-t0)/count_rate, "s"
+        t0=t1
+        
+        if (any((/ct==CCSD_spinorb, ct==CCSD_T_spinorb/))) then
+            call do_ccsd_spinorb(sys, int_store)
+            call system_clock(t1)
+            if (t1<t0) t1 = t1+count_max
+            write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for UCCSD:', real(t1-t0)/count_rate, "s"
+            t0=t1
 
-    call do_ccsd(sys, int_store)
-    call system_clock(t1)
-    if (t1<t0) t1 = t1+count_max
-    write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for CCSD:', real(t1-t0)/count_rate, "s"
-    t0=t1
+            if (ct==CCSD_T_spinorb) then
+                call do_ccsd_t_spinorb(sys, int_store)
+                call system_clock(t1)
+                if (t1<t0) t1 = t1+count_max
+                write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for UCCSD(T):', real(t1-t0)/count_rate, "s"
+                t0=t1
+            end if
+        end if
+    end if
 
-    call do_ccsd_t(sys, int_store)
-    call system_clock(t1)
-    if (t1<t0) t1 = t1+count_max
-    write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for CCSD(T):', real(t1-t0)/count_rate, "s"
-    t0=t1
+    if (any((/ct==MP2_spatial, ct==CCSD_spatial, ct==CCSD_T_spatial/))) then
+        call do_rhf(sys, int_store)
+        call system_clock(t1)
+        if (t1<t0) t1 = t1+count_max
+        write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for restricted Hartree-Fock:', real(t1-t0)/count_rate, "s"
+        t0=t1
+
+        call do_mp2_spatial(sys, int_store)
+        call system_clock(t1)
+        if (t1<t0) t1 = t1+count_max
+        write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for RMP2:', real(t1-t0)/count_rate, "s"
+        t0=t1
+        
+        if (any((/ct==CCSD_spatial, ct==CCSD_T_spatial/))) then
+            call do_ccsd_spatial(sys, int_store)
+            call system_clock(t1)
+            if (t1<t0) t1 = t1+count_max
+            write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for RCCSD:', real(t1-t0)/count_rate, "s"
+            t0=t1
+
+            if (ct==CCSD_T_spatial) then
+                call do_ccsd_t_spatial(sys, int_store)
+                call system_clock(t1)
+                if (t1<t0) t1 = t1+count_max
+                write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for RCCSD(T):', real(t1-t0)/count_rate, "s"
+                t0=t1
+            end if
+        end if
+    end if
+    end associate
 
     write(iunit, '(1X, 64("="))')
     write(iunit, '(1X, A)') 'Final energy breakdown'

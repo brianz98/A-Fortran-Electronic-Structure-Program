@@ -16,11 +16,11 @@ module hf
    end type diis_t
 
    contains
-      subroutine do_hartree_fock(sys, int_store)
-         use error_handling
-         use system
-         use integrals
-         use linalg
+      subroutine do_rhf(sys, int_store)
+         use error_handling, only: error
+         use system, only: system_t, state_t
+         use integrals, only: int_store_t
+         use linalg, only: mat_t
 
          type(int_store_t), intent(in) :: int_store
          type(system_t), intent(inout) :: sys
@@ -39,9 +39,9 @@ module hf
 
          iunit = 6
          maxiter = 100
-         write(iunit, '(1X, 12("-"))')
-         write(iunit, '(1X, A)') 'Hartree-Fock'
-         write(iunit, '(1X, 12("-"))')
+         write(iunit, '(1X, 23("-"))')
+         write(iunit, '(1X, A)') 'Restricted Hartree-Fock'
+         write(iunit, '(1X, 23("-"))')
 
          allocate(st%density_old(sys%nbasis,sys%nbasis), source=0.0_p)
 
@@ -123,7 +123,11 @@ module hf
          call deallocate_diis_t(diis)
          deallocate(st%density_old)
 
-      end subroutine do_hartree_fock
+      end subroutine do_rhf
+
+      subroutine do_uhf
+          continue
+      end subroutine do_uhf
 
       subroutine update_diis(diis, fock, density, ovlp)
          use linalg, only: linsolve
