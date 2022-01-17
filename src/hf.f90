@@ -45,33 +45,54 @@ module hf
 
          allocate(st%density_old(sys%nbasis,sys%nbasis), source=0.0_p)
 
-         ! Build the orthogonalisation matrix S^-1/2
+         ! ############################################
+         ! Build the symmetric orthogonalisation matrix
+         ! ############################################ 
+         ! X = S^-1/2 = U s^{-1/2} U^{\dagger} (Szabo and Ostlund eq. 3.167)
          ! Initialise the overlap matrix stored in int_store_t into a mat_t object
          call init_mat_t(int_store%ovlp, ovlp)
+         ! We're borrowing this from the SCF diagonalisation type, where the init_mat_t puts ovlp into ao but 
+         ! it's ao_ort that gets passed into BLAS for diagonalisation
          ovlp%ao_ort = ovlp%ao
-
-         ! S^(-1/2) = C * L^(-1/2) * C^(T)
          call diagonalise(ovlp)
-         call build_ortmat(ovlp, ortmat)
-
+         ortmat(:,:) = 0.0_p
+         ! ovlp%W holds the eigenvalues s_i of S
+         associate(diag=>ovlp%W)
+            do i = 1, size(ortmat, dim=1)
+               ortmat(i,i) = 1/sqrt(diag(i))
+            end do
+         end associate
+         ! S^-1/2 = U s^{-1/2} U^{\dagger}, the coefficient matrix U is held in ovlp%A
+         ortmat = matmul(ovlp%A, matmul(ortmat, transpose(ovlp%A)))
          call deallocate_mat_t(ovlp)
 
-         ! Initial guess Fock matrix is H_core
-         ! F'_0 = S^T(-1/2) * F * S^(-1/2)
+         ! ###############################
+         ! Various initialisation routines
+         ! ###############################
+         ! Initial guess Fock matrix is H_core (equivalent to guessing the null matrix for density matrix)
+         ! (Szabo and Ostlund p. 148)
          call init_mat_t(int_store%core_hamil, fockmat)
-
          call init_diis_t(sys, diis)
 
+         ! ####################
+         ! Iterative SCF solver
+         ! ####################
+
          do iter = 1, maxiter
+            ! F' is the fock matrix in orthogonal AO basis, where F is in the original non-orthogonal basis
+            ! F' = X^T F X
             fockmat%ao_ort = matmul(transpose(ortmat), matmul(fockmat%ao, ortmat))
 
+            ! F'C' = C'e
             call diagonalise(fockmat)
 
-            ! Transform coefficient into nonorthogonal AO basis
+            ! C = XC'
             fockmat%A = transpose(matmul(ortmat, fockmat%A))
 
+            ! D_{\mu\nu} = \sum_{i}^{nocc} C_\mu^i C_\nu^i
             call build_density(fockmat%A, density, sys%nel/2)
 
+            ! E_el = \sum_{\mu\nu} D_{\mu\nu} (H^{core}_{\mu\nu} + F_{\mu\nu})
             call update_scf_energy(sys, density, fockmat%ao, st, int_store, conv)
             if (conv) then
                write(iunit, '(1X, A)') 'Convergence reached within tolerance.'
@@ -217,31 +238,6 @@ module hf
          deallocate(mat%A)
          deallocate(mat%W)
       end subroutine deallocate_mat_t
-
-      subroutine build_ortmat(ovlp, ortmat)
-
-         use linalg, only: mat_t
-
-         type(mat_t), intent(in) :: ovlp
-         real(p), intent(out) :: ortmat(:,:)
-
-         real(p) :: tmpmat(size(ortmat, dim=1), size(ortmat, dim=1))
-
-         integer :: i
-         
-         tmpmat(:,:) = 0.0_p
-         ortmat(:,:) = 0.0_p
-
-         associate(diag=>ovlp%W)
-            do i = 1, size(ortmat, dim=1)
-               ortmat(i,i) = 1/sqrt(diag(i))
-            end do
-         end associate
-         
-         tmpmat = matmul(ortmat, transpose(ovlp%A))
-         ortmat = matmul(ovlp%A, tmpmat)
-
-      end subroutine build_ortmat
 
       subroutine build_density(coeff, density, nocc)
          real(p), intent(in) :: coeff(:,:)

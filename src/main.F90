@@ -3,7 +3,7 @@ program main
     use const
     use omp_lib
     use integrals, only: read_integrals_in, print_sys_info, int_store_t
-    use system, only: system_t
+    use system, only: system_t, read_system_in
     use hf, only: do_hartree_fock
     use geometry, only: read_geometry_in
     use mp2, only: do_mp2
@@ -30,6 +30,7 @@ program main
 
     call system_clock(t0, count_rate, count_max)
 
+    call read_system_in(sys)
     call read_integrals_in(sys, int_store)
     call read_geometry_in(sys, int_store)
     call print_sys_info(sys, int_store)

@@ -442,7 +442,7 @@ module ccsd
             !$omp parallel do default(none) &
             !$omp private(i,j,a,b,ia,ja,x) &
             !$omp shared(sys, cc_amp, cc_int) &
-            !$omp schedule(dynamic, 2) collapse(2)
+            !$omp schedule(runtime) collapse(2)
             do b = 2*nocc+1, 2*n
                do a = 2*nocc+1, 2*n
                   do j = 1, 2*nocc
@@ -488,14 +488,14 @@ module ccsd
          !$omp private(a, e, f, m, n, i) &
          !$omp shared(sys, cc_int, cc_amp, asym)
 
-         !$omp do schedule(dynamic, 2) collapse(2)
+         !$omp do schedule(runtime) collapse(2)
          do a = 2*nocc+1, 2*nbasis
             do e = 2*nocc+1, 2*nbasis
                do m = 1, 2*nocc
                   do f = 2*nocc+1, 2*nbasis
                      F_vv(a,e) = F_vv(a,e) + t_ia(m,f) * asym(f,e,m,a)
                      do n = 1, 2*nocc
-                        F_vv(a,e) = F_vv(a,e) + 0.5*tau_tilde(m,n,a,f)*asym(n,m,e,f)
+                        F_vv(a,e) = F_vv(a,e) + 0.5*tau_tilde(n,m,f,a)*asym(n,m,e,f)
                      end do
                   end do
                end do
@@ -504,14 +504,14 @@ module ccsd
          !$omp end do
 
          ! F_mi = \sum_{en} t_n^e <mn||ie> + 0.5 \sum_{nef} \tau~_{in}^{ef} <mn||ef>
-         !$omp do schedule(dynamic, 2) collapse(2)
+         !$omp do schedule(runtime) collapse(2)
          do m = 1, 2*nocc
             do i = 1, 2*nocc
                do e = 2*nocc+1, 2*nbasis
                   do n = 1, 2*nocc
                      F_oo(m,i) = F_oo(m,i) - t_ia(n,e)*asym(n,m,i,e)
                      do f = 2*nocc+1, 2*nbasis
-                        F_oo(m,i) = F_oo(m,i) - 0.5*tau_tilde(i,n,e,f)*asym(f,e,m,n)
+                        F_oo(m,i) = F_oo(m,i) - 0.5*tau_tilde(n,i,f,e)*asym(f,e,m,n)
                      end do
                   end do
                end do
@@ -520,7 +520,7 @@ module ccsd
          !$omp end do
 
          ! F_me = \sum_{nf} t_n^f * <mn||ef>
-         !$omp do schedule(dynamic, 2) collapse(2)
+         !$omp do schedule(runtime) collapse(2)
          do m = 1, 2*nocc
             do e = 2*nocc+1, 2*nbasis
                do n = 1, 2*nocc
@@ -562,7 +562,7 @@ module ccsd
          !$omp private(m, n, i, j, e, f, b, x, a) &
          !$omp shared(sys, cc_int, cc_amp, asym)
 
-         !$omp do schedule(dynamic, 2) collapse(4)
+         !$omp do schedule(runtime) collapse(4)
          do m = 1, 2*nocc
             do n = 1, 2*nocc
                do i = 1, 2*nocc
@@ -571,7 +571,7 @@ module ccsd
                      do e = 2*nocc+1, 2*nbasis
                         W_oooo(m,n,i,j) = W_oooo(m,n,i,j) + t_ia(j,e)*asym(e,i,n,m) - t_ia(i,e)*asym(e,j,n,m)
                         do f = 2*nocc+1, 2*nbasis
-                           W_oooo(m,n,i,j) = W_oooo(m,n,i,j) - 0.5*t_ijab(i,j,e,f)*asym(f,e,m,n)
+                           W_oooo(m,n,i,j) = W_oooo(m,n,i,j) - 0.5*t_ijab(j,i,f,e)*asym(f,e,m,n)
                         end do
                      end do
                   end do
@@ -581,7 +581,7 @@ module ccsd
          !$omp end do
 
          ! [TODO]: make a switch to on-the-fly W_vvvv computation, for when memory is limited
-         !$omp do schedule(dynamic, 2) collapse(4)
+         !$omp do schedule(runtime) collapse(4)
          do f = 2*nocc+1, 2*nbasis
             do e = 2*nocc+1, 2*nbasis
                do b = 2*nocc+1, 2*nbasis
@@ -596,7 +596,7 @@ module ccsd
          end do
          !$omp end do
 
-         !$omp do schedule(dynamic, 2) collapse(4)
+         !$omp do schedule(runtime) collapse(4)
          do j = 1, 2*nocc
             do e = 2*nocc+1, 2*nbasis
                do b = 2*nocc+1, 2*nbasis
@@ -656,18 +656,18 @@ module ccsd
          !$omp single
          tmp_t1 = 0.0_dp
          !$omp end single
-         !$omp do schedule(dynamic, 2) collapse(2)
-         do i = 1, 2*nocc
-            do a = 2*nocc+1, 2*nbasis
+         !$omp do schedule(runtime) collapse(2)
+         do a = 2*nocc+1, 2*nbasis
+            do i = 1, 2*nocc
                do m = 1, 2*nocc
                   tmp_t1(i,a) = tmp_t1(i,a) - t1(m,a)*F_oo(m,i)
                   do e = 2*nocc+1, 2*nbasis
-                     tmp_t1(i,a) = tmp_t1(i,a) + t2(i,m,a,e)*F_ov(m,e)
+                     tmp_t1(i,a) = tmp_t1(i,a) + t2(m,i,e,a)*F_ov(m,e)
                      do f = 2*nocc+1, 2*nbasis
-                        tmp_t1(i,a) = tmp_t1(i,a) + 0.5*t2(i,m,e,f)*asym(f,e,m,a)
+                        tmp_t1(i,a) = tmp_t1(i,a) + 0.5*t2(m,i,f,e)*asym(f,e,m,a)
                      end do
                      do n = 1, 2*nocc
-                        tmp_t1(i,a) = tmp_t1(i,a) - 0.5*t2(m,n,a,e)*asym(n,m,e,i)
+                        tmp_t1(i,a) = tmp_t1(i,a) - 0.5*t2(n,m,e,a)*asym(n,m,e,i)
                      end do
                   end do
                end do
@@ -688,42 +688,42 @@ module ccsd
          tmp_t2 = 0.0_dp
          !$omp end single
 
-         !$omp do schedule(dynamic, 2) collapse(4)
-         do i = 1, 2*nocc
-            do j = 1, 2*nocc
-               do a = 2*nocc+1, 2*nbasis
-                  do b = 2*nocc+1, 2*nbasis
+         !$omp do schedule(runtime) collapse(4)
+         do b = 2*nocc+1, 2*nbasis
+            do a = 2*nocc+1, 2*nbasis
+               do j = 1, 2*nocc
+                  do i = 1, 2*nocc
                      tmp_t2(i,j,a,b) = asym(i,j,a,b)
                      do e = 2*nocc+1, 2*nbasis
-                        tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) + t2(i,j,a,e)*F_vv(b,e) - t2(i,j,b,e)*F_vv(a,e) &
-                        + tmp_t1(i,e)*asym(a,b,e,j) - tmp_t1(j,e)*asym(a,b,e,i)
+                        tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) + t2(j,i,e,a)*F_vv(b,e) - t2(j,i,e,b)*F_vv(a,e) &
+                        + tmp_t1(i,e)*asym(e,j,a,b) - tmp_t1(j,e)*asym(e,i,a,b)
                         do m = 1, 2*nocc
                            tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) - 0.5*F_ov(m,e)*(t2(i,j,a,e)*tmp_t1(m,b)-&
                               t2(i,j,b,e)*tmp_t1(m,a))
                         end do
                         do f = 2*nocc+1, 2*nbasis
-                           tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) + 0.5*tau(i,j,e,f)*W_vvvv(a,b,e,f)
+                           tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) + 0.5*tau(j,i,f,e)*W_vvvv(a,b,e,f)
                         end do
                      end do
                      do m = 1, 2*nocc
-                        tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) - t2(i,m,a,b)*F_oo(m,j) + t2(j,m,a,b)*F_oo(m,i) &
+                        tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) - t2(m,i,b,a)*F_oo(m,j) + t2(m,j,b,a)*F_oo(m,i) &
                         - tmp_t1(m,a)*asym(m,b,i,j) + tmp_t1(m,b)*asym(m,a,i,j)
                         do e = 2*nocc+1, 2*nbasis
                            tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) - 0.5*F_ov(m,e)*(t2(i,m,a,b)*tmp_t1(j,e)-&
                               t2(j,m,a,b)*tmp_t1(i,e))
                         end do
                         do n = 1, 2*nocc
-                           tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) + 0.5*tau(m,n,a,b)*W_oooo(m,n,i,j)
+                           tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) + 0.5*tau(n,m,b,a)*W_oooo(m,n,i,j)
                         end do
                      end do
 
                      do m = 1, 2*nocc
                         do e = 2*nocc+1, 2*nbasis
                            tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) &
-                           + t2(i,m,a,e)*W_ovvo(m,b,e,j) - tmp_t1(i,e)*tmp_t1(m,a)*asym(e,j,m,b)&
-                           - t2(j,m,a,e)*W_ovvo(m,b,e,i) + tmp_t1(j,e)*tmp_t1(m,a)*asym(e,i,m,b)&
-                           - t2(i,m,b,e)*W_ovvo(m,a,e,j) + tmp_t1(i,e)*tmp_t1(m,b)*asym(e,j,m,a)&
-                           + t2(j,m,b,e)*W_ovvo(m,a,e,i) - tmp_t1(j,e)*tmp_t1(m,b)*asym(e,i,m,a)
+                           + t2(m,i,e,a)*W_ovvo(m,b,e,j) - tmp_t1(i,e)*tmp_t1(m,a)*asym(e,j,m,b)&
+                           - t2(m,j,e,a)*W_ovvo(m,b,e,i) + tmp_t1(j,e)*tmp_t1(m,a)*asym(e,i,m,b)&
+                           - t2(m,i,e,b)*W_ovvo(m,a,e,j) + tmp_t1(i,e)*tmp_t1(m,b)*asym(e,j,m,a)&
+                           + t2(m,j,e,b)*W_ovvo(m,a,e,i) - tmp_t1(j,e)*tmp_t1(m,b)*asym(e,i,m,a)
                         end do 
                      end do
                   end do
@@ -769,7 +769,7 @@ module ccsd
             !$omp shared(sys,st,int_store,cc_amp,ecc,rmst2) 
             ecc = 0.0_p
             rmst2 = 0.0_p
-            !$omp do schedule(dynamic, 2) collapse(4) reduction(+:ecc,rmst2)
+            !$omp do schedule(runtime) collapse(4) reduction(+:ecc,rmst2)
             do b = 2*nocc+1, 2*nbasis
                do a = 2*nocc+1, 2*nbasis
                   do j = 1, 2*nocc
@@ -834,7 +834,7 @@ module ccsd
          ! We could of course only compute one element in a loop iteration but that will probably result in bad floating point
          ! performance, here for each thread/loop iteration we use the Fortran intrinsic sum, 
          ! instead of all relying on OMP reduction, to hopefully give better floating point performance.
-         !$omp do schedule(dynamic, 2) collapse(3) reduction(+:e_T)
+         !$omp do schedule(runtime) collapse(3) reduction(+:e_T)
          do i = 1, 2*nocc
             do j = 1, 2*nocc
                do k = 1, 2*nocc
@@ -854,15 +854,15 @@ module ccsd
                            tmp_t3c(a,b,c) = 0.0_p
                            do f = 2*nocc+1, 2*nbasis
                               tmp_t3c(a,b,c) = tmp_t3c(a,b,c) &
-                                             + t2(j,k,a,f)*asym(f,i,b,c) - t2(i,k,a,f)*asym(f,j,b,c) - t2(j,i,a,f)*asym(f,k,b,c) &
-                                             - t2(j,k,b,f)*asym(f,i,a,c) + t2(i,k,b,f)*asym(f,j,a,c) + t2(j,i,b,f)*asym(f,k,a,c) &
-                                             - t2(j,k,c,f)*asym(f,i,b,a) + t2(i,k,c,f)*asym(f,j,b,a) + t2(j,i,c,f)*asym(f,k,b,a)
+                                             + t2(k,j,f,a)*asym(f,i,b,c) - t2(k,i,f,a)*asym(f,j,b,c) - t2(i,j,f,a)*asym(f,k,b,c) &
+                                             - t2(k,j,f,b)*asym(f,i,a,c) + t2(k,i,f,b)*asym(f,j,a,c) + t2(i,j,f,b)*asym(f,k,a,c) &
+                                             - t2(k,j,f,c)*asym(f,i,b,a) + t2(k,i,f,c)*asym(f,j,b,a) + t2(i,j,f,c)*asym(f,k,b,a)
                            end do
                            do m = 1, 2*nocc
                               tmp_t3c(a,b,c) = tmp_t3c(a,b,c) &
-                                             - t2(i,m,b,c)*asym(m,a,j,k) + t2(j,m,b,c)*asym(m,a,i,k) + t2(k,m,b,c)*asym(m,a,j,i) &
-                                             + t2(i,m,a,c)*asym(m,b,j,k) - t2(j,m,a,c)*asym(m,b,i,k) - t2(k,m,a,c)*asym(m,b,j,i) &
-                                             + t2(i,m,b,a)*asym(m,c,j,k) - t2(j,m,b,a)*asym(m,c,i,k) - t2(k,m,b,a)*asym(m,c,j,i)
+                                             - t2(m,i,c,b)*asym(m,a,j,k) + t2(m,j,c,b)*asym(m,a,i,k) + t2(m,k,c,b)*asym(m,a,j,i) &
+                                             + t2(m,i,c,a)*asym(m,b,j,k) - t2(m,j,c,a)*asym(m,b,i,k) - t2(m,k,c,a)*asym(m,b,j,i) &
+                                             + t2(m,i,a,b)*asym(m,c,j,k) - t2(m,j,a,b)*asym(m,c,i,k) - t2(m,k,a,b)*asym(m,c,j,i)
                            end do
                            tmp_t3c_d(a,b,c) = tmp_t3c(a,b,c)/(e(i)+e(j)+e(k)-e(a)-e(b)-e(c))
                         end do
