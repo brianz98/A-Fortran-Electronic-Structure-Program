@@ -22,6 +22,12 @@ module ccsd
       ! Energy denominators (Eqs. 12-13)
       real(dp), allocatable :: D_ia(:,:), D_ijab(:,:,:,:)
       real(dp), allocatable :: tmp_tia(:,:), tmp_tijab(:,:,:,:)
+      
+      ! These are the quantities required by the spin-free formulation, left unallocated if using spinorbital formulation
+      real(dp), dimension(:,:,:,:), allocatable :: v_div_d, v_ijab, v_bjai, v_ciab, v_jkai, v_klij, v_cdab
+      real(dp), dimension(:,:), allocatable :: I_ai, I_ba, I_ji, I_ji_p
+      real(dp), dimension(:,:,:,:), allocatable :: c_ijab, x_bjia
+      real(dp), dimension(:,:,:,:), allocatable :: I_klij, I_jbca, I_bjia, I_ciab_p, I_jkia_p
    end type cc_int_t
 
    type diis_cc_t
@@ -214,8 +220,8 @@ module ccsd
       end subroutine do_ccsd_spinorb
 
       subroutine do_ccsd_spatial(sys, int_store)
-         ! This is the spinorbital formulation of J.F. Stanton, J. Gauss, J.D. Watts, and R.J. Bartlett, J. Chem. Phys. volume 94, pp. 4334-4345 (1991) (https://doi.org/10.1063/1.460620)
-         ! [TODO]: closed-shell (spatial) formulation of Hirata, S.; Podeszwa, R.; Tobita, M.; Bartlett, R. J. J. Chem. Phys. 2004, 120 (6), 2581 (https://doi.org/10.1063/1.1637577)
+         ! This is the spin-free (spatial) formulation of P. Piecuch et al., Computer Physics Communications 149 (2002) 71–96, 
+         ! https://doi.org/10.1016/S0010-4655(02)00598-2
 
          use integrals, only: int_store_t, eri_ind
          use error_handling, only: error, check_allocate
@@ -240,90 +246,15 @@ module ccsd
          type(cc_int_t) :: cc_int
          logical :: conv
 
-         write(iunit, '(1X, 10("-"))')
-         write(iunit, '(1X, A)') 'CCSD'
-         write(iunit, '(1X, 10("-"))')
-
-         ! #############################################################################
-         ! Form the antisymmetrised spinorbital basis ERIs: <pq||rs> = <pq|rs> - <pq|sr>
-         ! where <pq|rs> = (pr|qs) * delta(sigma_p,sigma_r) * delta(sigma_q,sigma_s)
-         ! #############################################################################
-         write(iunit, '(1X, A)') 'Forming antisymmetrised spinorbital ERIs...'
-         call system_clock(count=t0, count_rate=c_rate, count_max=c_max)
-         allocate(int_store%asym_spinorb(sys%nbasis*2,sys%nbasis*2,sys%nbasis*2,sys%nbasis*2), source=0.0_dp, stat=ierr)
-         call check_allocate('int_store%asym_spinorb', sys%nbasis**4*16, ierr)
-
-         associate(n=>sys%nbasis, asym=>int_store%asym_spinorb, eri=>int_store%eri_mo)
-         ! [TODO]: this isn't necessary but easier for debugging, change to spin lookup arrays or something similar
-         do p = 1, n
-            pa = 2*p-1
-            pb = pa+1
-
-            do q = 1, n
-               qa = 2*q-1
-               qb = qa+1
-
-               do r = 1, n
-                  ra = 2*r-1
-                  rb = ra+1
-
-                  pr = eri_ind(p,r)
-                  qr = eri_ind(q,r)
-
-                  do s = 1, n
-                     sa = 2*s-1
-                     sb = sa+1
-                     prqs = eri(eri_ind(pr,eri_ind(q,s)))
-                     psqr = eri(eri_ind(eri_ind(p,s),qr))
-                     ! Draw a spin decision tree to visualise
-                     asym(pa,qa,ra,sa) = prqs-psqr
-                     asym(pb,qb,rb,sb) = prqs-psqr
-                     asym(pa,qb,ra,sb) = prqs
-                     asym(pb,qa,rb,sa) = prqs
-                     asym(pa,qb,rb,sa) = -psqr
-                     asym(pb,qa,ra,sb) = -psqr
-                  end do
-               end do
-            end do
-         end do
-         end associate
-         call system_clock(t1)
-         if (t1<t0) t1 = t1+c_max
-         write(iunit, '(1X, A, 1X, F8.6, A)') 'Time taken:', real(t1-t0, kind=dp)/c_rate, " s"
-         write(iunit, *)
-         t0=t1         
-
-         write(iunit, '(1X, A)') 'Checking that the permuational symmetry of the antisymmetrised integrals hold...'
-         err = 0.0_dp
-         associate(nbasis=>sys%nbasis, asym=>int_store%asym_spinorb)
-         do p = 1, 2*nbasis
-            do q = 1, p
-               do r = 1, p
-                  do s = 1, min(r,p)
-                     err = err + abs(asym(p,q,r,s) + asym(p,q,s,r)) + abs(asym(p,q,r,s) - asym(r,s,p,q)) &
-                               + abs(asym(p,q,r,s) + asym(s,r,p,q)) + abs(asym(p,q,r,s) - asym(s,r,q,p))
-                  end do
-               end do
-            end do
-         end do
-         end associate
-
-         if (err > depsilon) then
-            write(iunit, '(1X, A, 1X, E15.6)') 'Permutational symmetry error:', err
-            call error('ccsd::do_ccsd', 'Permutational symmetry of antisymmetrised integrals does not hold')
-         end if
-
-         call system_clock(t1)
-         if (t1<t0) t1 = t1+c_max
-         write(iunit, '(1X, A, 1X, F8.6, A)') 'Time taken:', real(t1-t0, kind=dp)/c_rate, " s"
-         write(iunit, *)
-         t0=t1
+         write(iunit, '(1X, 14("-"))')
+         write(iunit, '(1X, A)') 'Spin-free CCSD'
+         write(iunit, '(1X, 14("-"))')
 
          ! ############################################
          ! Initialise intermediate arrays and DIIS data
          ! ############################################
          write(iunit, '(1X, A)') 'Initialise CC intermediate tensors and DIIS auxilliary arrays...'
-         call init_cc(sys, int_store, cc_amp, cc_int)
+         call init_cc(sys, int_store, cc_amp, cc_int, restricted=.false.)
          allocate(st%t2_old, source=cc_amp%t_ijab)
          call init_diis_cc_t(sys, diis)
 
@@ -375,10 +306,11 @@ module ccsd
 
       end subroutine do_ccsd_spatial
 
-      subroutine init_cc(sys, int_store, cc_amp, cc_int)
+      subroutine init_cc(sys, int_store, cc_amp, cc_int, restricted)
          ! Initialise many CC related quantities.
          ! In:
          !     int_store: int_store_t object holding integrals.
+         !     restricted: true if we're using the spin-free formulation
          ! In/out:
          !     sys: system under study.
          !     cc_amp: CC amplitudes
@@ -386,83 +318,182 @@ module ccsd
 
          use integrals, only: int_store_t
          use error_handling, only: check_allocate 
+         use integrals, only: eri_ind
 
-         type(system_t), intent(inout) :: sys
          type(int_store_t), intent(in) :: int_store
+         logical, intent(in) :: restricted
+         type(system_t), intent(inout) :: sys
          type(cc_amp_t), intent(inout) :: cc_amp
          type(cc_int_t), intent(inout) :: cc_int
 
+         real(dp), allocatable :: temperi
+
          integer :: p, q, r, s, i, j, a, b, ierr
+         integer :: nocc, nvl, nvu, no_x_nv, n, nvirt
          integer, parameter :: iunit = 6
+
+         n = sys%nbasis
+         if (restricted) then
+            nocc = sys%nocc
+            nvl = nocc+1
+            nvu = n
+         else
+            nocc = 2*sys%nocc
+            nvl = 2*nocc+1
+            nvu = 2*n
+         end if
+         nvirt = nvu-nvl+1
+         no_x_nv = nocc*nvirt
+
 
          write(iunit, '(1X, A)') 'Forming energy denominator matrices...'
          ! Forming the energy denominator matrices
-         associate(n=>sys%nbasis, nocc=>sys%nocc, e=>sys%canon_levels)
-         allocate(cc_int%D_ia(2*nocc, 2*nocc+1:2*n), source=0.0_dp, stat=ierr)
-         call check_allocate('cc_int%D_ia', 4*nocc*(n-nocc), ierr)
-         allocate(cc_int%D_ijab(2*nocc, 2*nocc, 2*nocc+1:2*n, 2*nocc+1:2*n), source=0.0_dp, stat=ierr)
-         call check_allocate('cc_int%D_ijab', 16*(nocc**2*(n-nocc)**2), ierr)
-         do i = 1, nocc
-            do a = nocc+1, n
-               cc_int%D_ia(2*i-1:2*i,2*a-1:2*a) = e(i)-e(a)
-               do j = 1, nocc
-                  do b = nocc+1, n
-                     cc_int%D_ijab(2*i-1:2*i, 2*j-1:2*j, 2*a-1:2*a, 2*b-1:2*b) = e(i)+e(j)-e(a)-e(b)
+         associate(e=>sys%canon_levels)
+         allocate(cc_int%D_ia(nocc, nvl:nvu), source=0.0_dp, stat=ierr)
+         call check_allocate('cc_int%D_ia', no_x_nv, ierr)
+         allocate(cc_int%D_ijab(nocc, nocc, nvl:nvu, nvl:nvu), source=0.0_dp, stat=ierr)
+         call check_allocate('cc_int%D_ijab', no_x_nv**2, ierr)
+         if (restricted) then
+            do i = 1, nocc
+               do a = nocc+1, n
+                  cc_int%D_ia(i,a) = e(i)-e(a)
+                  do j = 1, nocc
+                     do b = nocc+1, n
+                        cc_int%D_ijab(i,j,a,b) = e(i)+e(j)-e(a)-e(b)
+                     end do
                   end do
                end do
             end do
-         end do
+         else
+            do i = 1, nocc
+               do a = nocc+1, n
+                  cc_int%D_ia(2*i-1:2*i,2*a-1:2*a) = e(i)-e(a)
+                  do j = 1, nocc
+                     do b = nocc+1, n
+                        cc_int%D_ijab(2*i-1:2*i, 2*j-1:2*j, 2*a-1:2*a, 2*b-1:2*b) = e(i)+e(j)-e(a)-e(b)
+                     end do
+                  end do
+               end do
+            end do
+         end if
 
          ! This is only later useful in CCSD(T) but we can just do it here...
          allocate(sys%canon_levels_spinorb(2*n), source=0.0_dp)
          do i = 1, n
             sys%canon_levels_spinorb(2*i-1:2*i) = e(i)
          end do
-      
-         write(iunit, '(1X, A)') 'Allocating amplitude tensors...'
-         ! Initialise t_i^a=0 and t_{ij}^{ab}=MP1 WF
-         allocate(cc_amp%t_ijab(2*nocc,2*nocc,2*nocc+1:2*n,2*nocc+1:2*n), source=0.0_dp, stat=ierr)
-         call check_allocate('cc_amp%t_ijab', 16*(nocc**2*(n-nocc)**2), ierr)
-         allocate(cc_int%tmp_tijab, mold=cc_amp%t_ijab, stat=ierr)
-         call check_allocate('cc_int%tmp_tijab', 16*(nocc**2*(n-nocc)**2), ierr)
-         allocate(cc_amp%t_ia(2*nocc, 2*nocc+1:2*n), source=0.0_dp, stat=ierr)
-         call check_allocate('cc_amp%t_ia', 4*nocc*(n-nocc), ierr)
-         allocate(cc_int%tmp_tia, mold=cc_amp%t_ia, stat=ierr)
-         call check_allocate('cc_int%tmp_tia', 4*nocc*(n-nocc), ierr)
          end associate
 
-         write(iunit, '(1X, A)') 'Forming initial amplitude guesses...'
-         associate(doubles=>cc_amp%t_ijab, nocc=>sys%nocc, asym=>int_store%asym_spinorb)
-         do p = 1, 2*nocc
-            do q = 1, 2*nocc
-               do r = 2*sys%nocc+1, 2*sys%nbasis
-                  do s = 2*sys%nocc+1, 2*sys%nbasis
-                     doubles(p,q,r,s) = asym(p,q,r,s)/cc_int%D_ijab(p,q,r,s)
+         write(iunit, '(1X, A)') 'Allocating amplitude tensors...'
+         ! Initialise t_i^a=0 and t_{ij}^{ab}=MP1 WF
+         allocate(cc_amp%t_ijab(nocc,nocc,nvl:nvu,nvl:nvu), source=0.0_dp, stat=ierr)
+         call check_allocate('cc_amp%t_ijab', no_x_nv**2), ierr)
+         allocate(cc_int%tmp_tijab, mold=cc_amp%t_ijab, stat=ierr)
+         call check_allocate('cc_int%tmp_tijab', no_x_nv**2), ierr)
+         allocate(cc_amp%t_ia(nocc, nvl:nvu), source=0.0_dp, stat=ierr)
+         call check_allocate('cc_amp%t_ia', no_x_nv, ierr)
+         allocate(cc_int%tmp_tia, mold=cc_amp%t_ia, stat=ierr)
+         call check_allocate('cc_int%tmp_tia', no_x_nv, ierr)
+
+         if (restricted) then
+            ! Re-sort MO ERIs into different slices for efficient vectorised operations
+            allocate(cc_int%v_div_d(nocc,nocc,nvl:nvu,nvl:nvu), source=0.0_dp, stat=ierr)
+            call check_allocate('cc_int%v_div_d', no_x_nv**2), ierr)
+            allocate(cc_int%v_abij(nocc,nocc,nvl:nvu,nvl:nvu), source=0.0_dp, stat=ierr)
+            call check_allocate('cc_int%v_ijab', no_x_nv**2), ierr)
+            allocate(cc_int%v_aibj(nocc,nocc,nvl:nvu,nvl:nvu), source=0.0_dp, stat=ierr)
+            call check_allocate('cc_int%bjai', no_x_nv**2), ierr)
+            allocate(cc_int%v_abci(nvl:nvu,nocc,nvl:nvu,nocc), source=0.0_dp, stat=ierr)
+            call check_allocate('cc_int%v_ciab', no_x_nv**2), ierr)
+            allocate(cc_int%v_aijk(nvl:nvu,nocc,nvl:nvu,nvl:nvu), source=0.0_dp, stat=ierr)
+            call check_allocate('cc_int%v_jkai', no_x_nv*nvirt**2), ierr)
+            allocate(cc_int%v_ijkl(nocc,nocc,nocc,nocc), source=0.0_dp, stat=ierr)
+            call check_allocate('cc_int%v_klij', nocc**4), ierr)
+            allocate(cc_int%v_abcd(nvl:nvu,nvl:nvu,nvl:nvu,nvl:nvu), source=0.0_dp, stat=ierr)
+            call check_allocate('cc_int%v_cdab', nvirt**4), ierr)
+            allocate(temperi(nvu,nvu,nvu,nvu), source=0.0_dp, stat=ierr)
+            call check_allocate('temperi', nvu**4, ierr)
+            
+            do s = 1, nvu
+               do r = 1, nvu
+                  rs = eri_ind(r,s)
+                  do q = 1, nvu
+                     do p = 1, nvu
+                        temperi(p,q,r,s) = int_store%eri_mo(eri_ind(eri_ind(p,q),rs))
+                     end do
                   end do
                end do
             end do
-         end do
+
+            cc_int%v_ijab = temperi(1:nocc,1:nocc,nvl:nvu,nvl:nvu)
+            cc_int%v_div_d = cc_int%v_ijab / D_ijab
+            cc_int%v_bjai = temperi(nvl:nvu,1:nocc,nvl:nvu,1:nocc)
+            cc_int%v_ciab = temperi(nvl:nvu,1:nocc,nvl:nvu,nvl:nvu)
+            cc_int%v_jkai = temperi(1:nocc,1:nocc,nvl:nvu,nvl:nvu)
+            cc_int%v_klij = temperi(1:nocc,1:nocc,1:nocc,1:nocc)
+            cc_int%v_cdab = temperi(nvl:nvu,nvl:nvu,nvl:nvu,nvl:nvu)
+
+            deallocate(temperi)
+
+         end if
+
+         write(iunit, '(1X, A)') 'Forming initial amplitude guesses...'
+         associate(doubles=>cc_amp%t_ijab, asym=>int_store%asym_spinorb)
+         if (restricted) then
+            doubles = v_vid_d
+         else
+            doubles = asym(1:nocc,1:nocc,nvl:nvu,nvl:nvu)/cc_int%D_ijab
+         end if
          end associate
 
          write(iunit, '(1X, A)') 'Allocating intermediate tensors...'
          ! Allocate the intermediate tensors
          associate(n=>sys%nbasis, nocc=>sys%nocc)
-         allocate(cc_int%F_vv(2*nocc+1:2*n,2*nocc+1:2*n), source=0.0_dp, stat=ierr)
-         call check_allocate('cc_int%F_vv', 4*(n-nocc)**2, ierr)
-         allocate(cc_int%F_oo(2*nocc,2*nocc), source=0.0_dp, stat=ierr)
-         call check_allocate('cc_int%F_oo', 4*nocc**2, ierr)
-         allocate(cc_int%F_ov(2*nocc,2*nocc+1:2*n), source=0.0_dp, stat=ierr)
-         call check_allocate('cc_int%F_ov', 4*nocc*(n-nocc), ierr)
-         allocate(cc_int%W_oooo(2*nocc,2*nocc,2*nocc,2*nocc), source=0.0_dp, stat=ierr)
-         call check_allocate('cc_int%W_oooo', 16*nocc**4, ierr)
-         allocate(cc_int%W_vvvv(2*nocc+1:2*n,2*nocc+1:2*n,2*nocc+1:2*n,2*nocc+1:2*n), source=0.0_dp, stat=ierr)
-         call check_allocate('cc_int%W_vvvv', 16*(n-nocc)**4, ierr)
-         allocate(cc_int%W_ovvo(2*nocc,2*nocc+1:2*n,2*nocc+1:2*n,2*nocc), source=0.0_dp, stat=ierr)
-         call check_allocate('cc_int%W_ovvo', 16*nocc**2*(n-nocc)**2, ierr)
-         allocate(cc_int%tau(2*nocc,2*nocc,2*nocc+1:2*n,2*nocc+1:2*n), source=0.0_dp, stat=ierr)
-         call check_allocate('cc_int%tau', 16*nocc**2*(n-nocc)**2, ierr)
-         allocate(cc_int%tau_tilde(2*nocc,2*nocc,2*nocc+1:2*n,2*nocc+1:2*n), source=0.0_dp, stat=ierr)
-         call check_allocate('cc_int%tau_tilde', 16*nocc**2*(n-nocc)**2, ierr)
+         if (restricted) then
+            ! Two-index intermediates
+            allocate(cc_int%I_ai(nvl:nvu, nocc), source=0.0_dp, stat=ierr)
+            call check_allocate('cc_int%I_ai', no_x_nv, ierr)
+            allocate(cc_int%I_ba(nvl:nvu, nvl:nvu), source=0.0_dp, stat=ierr)
+            call check_allocate('cc_int%I_ba', (nvu-nvl+1)**2, ierr)
+            allocate(cc_int%I_ji_p(nocc, nocc), source=0.0_dp, stat=ierr)
+            call check_allocate('cc_int%I_ji_p', nocc**2, ierr)
+            allocate(cc_int%I_ji(nocc, nocc), source=0.0_dp, stat=ierr)
+            call check_allocate('cc_int%I_ji', nocc**2, ierr)
+
+            ! Four-index intermediates
+            allocate(cc_int%c_ijab(nocc,nocc,nvl:nvu,nvl:nvu), source=0.0_dp, stat=ierr)
+            call check_allocate('cc_int%c_ijab', no_x_nv**2, ierr)
+            allocate(cc_int%x_bjia(nvl:nvu,nocc,nocc,nvl:nvu), source=0.0_dp, stat=ierr)
+            call check_allocate('cc_int%x_bjia', no_x_nv**2, ierr)
+            allocate(cc_int%I_klij(nocc,nocc,nocc,nocc), source=0.0_dp, stat=ierr)
+            call check_allocate('cc_int%I_klij', nocc**4, ierr)
+            allocate(cc_int%I_jbca(nocc,nvl:nvu,nvl:nvu,nvl:nvu), source=0.0_dp, stat=ierr)
+            call check_allocate('cc_int%I_jbca', nocc*nvirt**3, ierr)
+            allocate(cc_int%I_bjia(nvl:nvu,nocc,nocc,nvl:nvu), source=0.0_dp, stat=ierr)
+            call check_allocate('cc_int%I_bjia', no_x_nv**2, ierr)
+            allocate(cc_int%I_ciab_p(nvl:nvu,nocc,nocc,nocc), source=0.0_dp, stat=ierr)
+            call check_allocate('cc_int%I_ciab_p', nvirt*nocc**3, ierr)
+            allocate(cc_int%I_jkia_p(nocc,nocc,nocc,nvl:nvu), source=0.0_dp, stat=ierr)
+            call check_allocate('cc_int%I_jkia_p', nvirt*nocc**3, ierr)
+
+         else
+            allocate(cc_int%F_vv(nvl:nvu,nvl:nvu), source=0.0_dp, stat=ierr)
+            call check_allocate('cc_int%F_vv', nvirt**2, ierr)
+            allocate(cc_int%F_oo(nocc,nocc), source=0.0_dp, stat=ierr)
+            call check_allocate('cc_int%F_oo', nocc**2, ierr)
+            allocate(cc_int%F_ov(nocc,nvl:nvu), source=0.0_dp, stat=ierr)
+            call check_allocate('cc_int%F_ov', no_x_nv, ierr)
+            allocate(cc_int%W_oooo(nocc,nocc,nocc,nocc), source=0.0_dp, stat=ierr)
+            call check_allocate('cc_int%W_oooo', nocc**4, ierr)
+            allocate(cc_int%W_vvvv(nvl:nvu,nvl:nvu,nvl:nvu,nvl:nvu), source=0.0_dp, stat=ierr)
+            call check_allocate('cc_int%W_vvvv', nvirt**4, ierr)
+            allocate(cc_int%W_ovvo(nocc,nvl:nvu,nvl:nvu,nocc), source=0.0_dp, stat=ierr)
+            call check_allocate('cc_int%W_ovvo', no_x_nv**2, ierr)
+            allocate(cc_int%tau(nocc,nocc,nvl:nvu,nvl:nvu), source=0.0_dp, stat=ierr)
+            call check_allocate('cc_int%tau', no_x_nv**2, ierr)
+            allocate(cc_int%tau_tilde(nocc,nocc,nvl:nvu,nvl:nvu), source=0.0_dp, stat=ierr)
+            call check_allocate('cc_int%tau_tilde', no_x_nv**2, ierr)
+         end if
          end associate
 
       end subroutine init_cc
