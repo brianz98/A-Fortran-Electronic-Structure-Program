@@ -23,3 +23,24 @@ The end goal of this project will be performing HF, MP2, CCSD, and CCSD(T), as p
 - [ ] MPI parallelisation
 - [ ] GPU adaptation for MP2 and CCSD/(T)
 - [ ] User input file: level of theory, tolerances
+
+## Installation guide
+To get started, clone this directory by
+```
+git clone git@github.com:brianz98/A-Fortran-Electronic-Structure-Programme.git
+```
+### Dependencies
+You need to have:
+- CMake (at least 3.12)
+- A Fortran compiler (gfortran 9.3.0 have been tested)
+- OpenBLAS (see below for instructions)
+
+### Installing OpenBLAS
+Download the latest OpenBLAS version from [their website](https://www.openblas.net/), and untar, then
+```
+make USE_OPENMP=1
+make install [PREFIX=/your/directory]
+```
+where the `PREFIX` can be omitted and OpenBLAS will be installed in `/opt/OpenBLAS` by default, but you'll likely need to prefix `sudo` to the command.
+
+If you install OpenBLAS in directories other than `/opt/OpenBLAS`, then you need to edit the last line of `CMakeLists.txt` to where `libopenblas.a` actually is.
