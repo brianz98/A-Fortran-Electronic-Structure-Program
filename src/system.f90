@@ -17,6 +17,9 @@ module system
       integer, allocatable :: charges(:)
       real(p), allocatable :: coords(:,:)
 
+      ! Used in loop limits, same name for both restricted and unrestricted
+      integer :: nou = 0; nvl = 0; nvu = 0; nv = 0; no_x_nv = 0
+
       ! Calculation info
       real(p) :: e_hf = 0.0_p
       real(p) :: e_mp2 = 0.0_p

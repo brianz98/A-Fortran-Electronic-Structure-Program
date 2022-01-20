@@ -14,20 +14,20 @@ module ccsd
    type cc_int_t
       ! Intermediate quantities as defined in Stanton et al. (see do_ccsd below)
       ! Curly F tensors (Eqs. 3-5)
-      real(dp), allocatable :: F_oo(:,:), F_vv(:,:), F_ov(:,:)
+      real(dp), dimension(:,:), allocatable :: F_oo, F_vv, F_ov
       ! Curly W tensors (Eqs. 6,8), see Appendix for why 7 is avoided
-      real(dp), allocatable :: W_oooo(:,:,:,:), W_vvvv(:,:,:,:), W_ovvo(:,:,:,:)
+      real(dp), dimension(:,:,:,:), allocatable :: W_oooo, W_vvvv, W_ovvo
       ! Effective two-particle excitation operators tau and tilde tau (Eqs. 9-10)
-      real(dp), allocatable :: tau_tilde(:,:,:,:), tau(:,:,:,:)
+      real(dp), dimension(:,:,:,:), allocatable :: tau_tilde, tau
       ! Energy denominators (Eqs. 12-13)
       real(dp), allocatable :: D_ia(:,:), D_ijab(:,:,:,:)
-      real(dp), allocatable :: tmp_tia(:,:), tmp_tijab(:,:,:,:)
+      real(dp), allocatable :: tmp_tia(:,:), tmp_tijab(:,:,:,:), tmp_tia_scratch(:,:), tmp_tijab_scratch(:,:,:,:)
       
       ! These are the quantities required by the spin-free formulation, left unallocated if using spinorbital formulation
-      real(dp), dimension(:,:,:,:), allocatable :: v_div_d, v_ijab, v_bjai, v_ciab, v_jkai, v_klij, v_cdab
-      real(dp), dimension(:,:), allocatable :: I_ai, I_ba, I_ji, I_ji_p
-      real(dp), dimension(:,:,:,:), allocatable :: c_ijab, x_bjia
-      real(dp), dimension(:,:,:,:), allocatable :: I_klij, I_jbca, I_bjia, I_ciab_p, I_jkia_p
+      real(dp), dimension(:,:,:,:), allocatable :: v_div_d, v_oovv, v_vovo, v_vovv, v_oovo, v_oooo, v_vvvv
+      real(dp), dimension(:,:), allocatable :: I_vo, I_vv, I_oo, I_oo_p
+      real(dp), dimension(:,:,:,:), allocatable :: c_oovv, x_voov
+      real(dp), dimension(:,:,:,:), allocatable :: I_oooo, I_ovvv, I_voov, I_vovv_p, I_ooov_p
    end type cc_int_t
 
    type diis_cc_t
@@ -168,92 +168,6 @@ module ccsd
          ! Initialise intermediate arrays and DIIS data
          ! ############################################
          write(iunit, '(1X, A)') 'Initialise CC intermediate tensors and DIIS auxilliary arrays...'
-         call init_cc(sys, int_store, cc_amp, cc_int)
-         allocate(st%t2_old, source=cc_amp%t_ijab)
-         call init_diis_cc_t(sys, diis)
-
-         call system_clock(t1)
-         if (t1<t0) t1 = t1+c_max
-         write(iunit, '(1X, A, 1X, F8.6, A)') 'Time taken:', real(t1-t0, kind=dp)/c_rate, " s"
-         write(iunit, *)
-         t0=t1
-
-         write(iunit, '(1X, A)') 'Initialisation done, now entering iterative CC solver...'
-
-         ! ###################
-         ! Iterative CC solver
-         ! ###################
-         associate(nbasis=>sys%nbasis, nocc=>sys%nocc, t_ia=>cc_amp%t_ia, t_ijab=>cc_amp%t_ijab, asym=>int_store%asym_spinorb)
-         do iter = 1, maxiter
-            ! Update intermediate tensors
-            call build_tau(sys, cc_amp, cc_int)
-            call build_F(sys, cc_int, cc_amp, asym)
-            call build_W(sys, cc_int, cc_amp, asym)
-
-            ! CC amplitude equations
-            call update_amplitudes(sys, cc_amp, int_store, cc_int)
-            call update_cc_energy(sys, st, int_store, cc_amp, conv)
-            
-            if (conv) then
-               write(iunit, '(1X, A)') 'Convergence reached within tolerance.'
-               write(iunit, '(1X, A, 1X, F15.8)') 'Final CCSD Energy (Hartree):', st%energy
-
-               ! Copied for return 
-               sys%e_ccsd = st%energy
-               call move_alloc(cc_amp%t_ia, sys%t1)
-               call move_alloc(cc_amp%t_ijab, sys%t2)
-               exit
-            end if
-            call update_diis_cc(diis, cc_amp)
-
-            call system_clock(t1)
-            write(iunit, '(1X, A, 1X, I2, 2X, F10.7, 2X, F8.6, 1X, A)') 'Iteration', iter, st%energy,real(t1-t0, kind=dp)/c_rate,'s'
-            t0=t1
-         end do
-         end associate
-
-         ! Nonlazy deallocations
-         deallocate(st%t2_old)
-         call deallocate_cc_int_t(cc_int)
-         call deallocate_diis_cc_t(diis)
-
-      end subroutine do_ccsd_spinorb
-
-      subroutine do_ccsd_spatial(sys, int_store)
-         ! This is the spin-free (spatial) formulation of P. Piecuch et al., Computer Physics Communications 149 (2002) 71–96, 
-         ! https://doi.org/10.1016/S0010-4655(02)00598-2
-
-         use integrals, only: int_store_t, eri_ind
-         use error_handling, only: error, check_allocate
-         use system, only: state_t
-
-         type(system_t), intent(inout) :: sys
-         type(int_store_t), intent(inout) :: int_store
-         integer :: i, j, a, b, p, q, r, s
-         integer :: pr, qr, pa, pb, qa, qb, ra, rb, sa, sb
-         real(dp) :: prqs, psqr
-         real(dp) :: err
-         integer(kind=8) :: c_max, c_rate, t0, t1
-
-         type(state_t) :: st
-         type(diis_cc_t) :: diis
-         
-         type(cc_amp_t) :: cc_amp
-         integer :: ierr, iter
-         integer, parameter :: iunit = 6
-         integer, parameter :: maxiter = 100
-
-         type(cc_int_t) :: cc_int
-         logical :: conv
-
-         write(iunit, '(1X, 14("-"))')
-         write(iunit, '(1X, A)') 'Spin-free CCSD'
-         write(iunit, '(1X, 14("-"))')
-
-         ! ############################################
-         ! Initialise intermediate arrays and DIIS data
-         ! ############################################
-         write(iunit, '(1X, A)') 'Initialise CC intermediate tensors and DIIS auxilliary arrays...'
          call init_cc(sys, int_store, cc_amp, cc_int, restricted=.false.)
          allocate(st%t2_old, source=cc_amp%t_ijab)
          call init_diis_cc_t(sys, diis)
@@ -300,8 +214,96 @@ module ccsd
 
          ! Nonlazy deallocations
          deallocate(st%t2_old)
-         call deallocate_cc_int_t(cc_int)
-         call deallocate_diis_cc_t(diis)
+         deallocate(cc_int, diis)
+         !call deallocate_cc_int_t(cc_int)
+         !call deallocate_diis_cc_t(diis)
+
+      end subroutine do_ccsd_spinorb
+
+      subroutine do_ccsd_spatial(sys, int_store)
+         ! This is the spin-free (spatial) formulation of P. Piecuch et al., Computer Physics Communications 149 (2002) 71–96, 
+         ! https://doi.org/10.1016/S0010-4655(02)00598-2
+
+         use integrals, only: int_store_t, eri_ind
+         use error_handling, only: error, check_allocate
+         use system, only: state_t
+
+         type(system_t), intent(inout) :: sys
+         type(int_store_t), intent(inout) :: int_store
+         integer :: i, j, a, b, p, q, r, s
+         integer :: pr, qr, pa, pb, qa, qb, ra, rb, sa, sb
+         real(dp) :: prqs, psqr
+         real(dp) :: err
+         integer(kind=8) :: c_max, c_rate, t0, t1
+
+         type(state_t) :: st
+         type(diis_cc_t) :: diis
+         
+         type(cc_amp_t) :: cc_amp
+         integer :: ierr, iter
+         integer, parameter :: iunit = 6
+         integer, parameter :: maxiter = 100
+
+         type(cc_int_t) :: cc_int
+         logical :: conv
+
+         write(iunit, '(1X, 14("-"))')
+         write(iunit, '(1X, A)') 'Spin-free CCSD'
+         write(iunit, '(1X, 14("-"))')
+
+         ! ############################################
+         ! Initialise intermediate arrays and DIIS data
+         ! ############################################
+         write(iunit, '(1X, A)') 'Initialise CC intermediate tensors and DIIS auxilliary arrays...'
+         call init_cc(sys, int_store, cc_amp, cc_int, restricted=.true.)
+         allocate(st%t2_old, source=cc_amp%t_ijab)
+         call init_diis_cc_t(sys, diis)
+
+         call system_clock(t1)
+         if (t1<t0) t1 = t1+c_max
+         write(iunit, '(1X, A, 1X, F8.6, A)') 'Time taken:', real(t1-t0, kind=dp)/c_rate, " s"
+         write(iunit, *)
+         t0=t1
+
+         write(iunit, '(1X, A)') 'Initialisation done, now entering iterative CC solver...'
+
+         ! ###################
+         ! Iterative CC solver
+         ! ###################
+         associate(nbasis=>sys%nbasis, nocc=>sys%nocc, t_ia=>cc_amp%t_ia, t_ijab=>cc_amp%t_ijab, asym=>int_store%asym_spinorb)
+         do iter = 1, maxiter
+            ! Update intermediate tensors
+            call build_tau(sys, cc_amp, cc_int)
+            call build_F(sys, cc_int, cc_amp, asym)
+            call build_W(sys, cc_int, cc_amp, asym)
+
+            ! CC amplitude equations
+            call update_amplitudes(sys, cc_amp, int_store, cc_int)
+            call update_cc_energy(sys, st, int_store, cc_amp, conv)
+            
+            if (conv) then
+               write(iunit, '(1X, A)') 'Convergence reached within tolerance.'
+               write(iunit, '(1X, A, 1X, F15.8)') 'Final CCSD Energy (Hartree):', st%energy
+
+               ! Copied for return 
+               sys%e_ccsd = st%energy
+               call move_alloc(cc_amp%t_ia, sys%t1)
+               call move_alloc(cc_amp%t_ijab, sys%t2)
+               exit
+            end if
+            call update_diis_cc(diis, cc_amp)
+
+            call system_clock(t1)
+            write(iunit, '(1X, A, 1X, I2, 2X, F10.7, 2X, F8.6, 1X, A)') 'Iteration', iter, st%energy,real(t1-t0, kind=dp)/c_rate,'s'
+            t0=t1
+         end do
+         end associate
+
+         ! Nonlazy deallocations
+         deallocate(st%t2_old)
+         deallocate(cc_int, diis)
+         !call deallocate_cc_int_t(cc_int)
+         !call deallocate_diis_cc_t(diis)
 
 
       end subroutine do_ccsd_spatial
@@ -329,26 +331,26 @@ module ccsd
          real(dp), allocatable :: temperi
 
          integer :: p, q, r, s, i, j, a, b, ierr
-         integer :: nocc, nvl, nvu, no_x_nv, n, nvirt
          integer, parameter :: iunit = 6
 
-         n = sys%nbasis
+         ! Set loop limits
          if (restricted) then
-            nocc = sys%nocc
-            nvl = nocc+1
-            nvu = n
+            sys%nou = sys%nocc
+            sys%nvl = sys%nou+1
+            sys%nvu = sys%nbasis
          else
-            nocc = 2*sys%nocc
-            nvl = 2*nocc+1
-            nvu = 2*n
+            sys%nou = 2*sys%nocc
+            sys%nvl = 2*nocc+1
+            sys%nvu = 2*n
          end if
-         nvirt = nvu-nvl+1
-         no_x_nv = nocc*nvirt
+         sys%nv = sys%nvu-sys%nvl+1
+         sys%no_x_nv = sys%nou*sys%nvirt
 
 
          write(iunit, '(1X, A)') 'Forming energy denominator matrices...'
-         ! Forming the energy denominator matrices
-         associate(e=>sys%canon_levels)
+         ! Forming the energy denominator matrices D^{abc...}_{ijk...} = e_i + e_j + ... - e_a - e_b - ...
+         associate(e=>sys%canon_levels, nocc=>sys%nou, nvl=>sys%nvl, nvu=>sys%nvu, nvirt=>sys%nv, no_x_nv=>sys%no_x_nv, &
+            doubles=>cc_amp%t_ijab, asym=>int_store%asym_spinorb)
          allocate(cc_int%D_ia(nocc, nvl:nvu), source=0.0_dp, stat=ierr)
          call check_allocate('cc_int%D_ia', no_x_nv, ierr)
          allocate(cc_int%D_ijab(nocc, nocc, nvl:nvu, nvl:nvu), source=0.0_dp, stat=ierr)
@@ -382,35 +384,38 @@ module ccsd
          do i = 1, n
             sys%canon_levels_spinorb(2*i-1:2*i) = e(i)
          end do
-         end associate
+         
 
          write(iunit, '(1X, A)') 'Allocating amplitude tensors...'
          ! Initialise t_i^a=0 and t_{ij}^{ab}=MP1 WF
          allocate(cc_amp%t_ijab(nocc,nocc,nvl:nvu,nvl:nvu), source=0.0_dp, stat=ierr)
          call check_allocate('cc_amp%t_ijab', no_x_nv**2), ierr)
-         allocate(cc_int%tmp_tijab, mold=cc_amp%t_ijab, stat=ierr)
+         allocate(cc_int%tmp_tijab, cc_int%tmp_ijab_scratch, mold=cc_amp%t_ijab, stat=ierr)
          call check_allocate('cc_int%tmp_tijab', no_x_nv**2), ierr)
+         call check_allocate('cc_int%tmp_ijab_scratch', no_x_nv**2), ierr)
          allocate(cc_amp%t_ia(nocc, nvl:nvu), source=0.0_dp, stat=ierr)
          call check_allocate('cc_amp%t_ia', no_x_nv, ierr)
-         allocate(cc_int%tmp_tia, mold=cc_amp%t_ia, stat=ierr)
+         allocate(cc_int%tmp_tia, cc_int%tmp_tia_scratch, mold=cc_amp%t_ia, stat=ierr)
          call check_allocate('cc_int%tmp_tia', no_x_nv, ierr)
+         call check_allocate('cc_int%tmp_tia_scratch', no_x_nv, ierr)
 
          if (restricted) then
             ! Re-sort MO ERIs into different slices for efficient vectorised operations
             allocate(cc_int%v_div_d(nocc,nocc,nvl:nvu,nvl:nvu), source=0.0_dp, stat=ierr)
             call check_allocate('cc_int%v_div_d', no_x_nv**2), ierr)
             allocate(cc_int%v_abij(nocc,nocc,nvl:nvu,nvl:nvu), source=0.0_dp, stat=ierr)
-            call check_allocate('cc_int%v_ijab', no_x_nv**2), ierr)
+            call check_allocate('cc_int%v_oovv', no_x_nv**2), ierr)
             allocate(cc_int%v_aibj(nocc,nocc,nvl:nvu,nvl:nvu), source=0.0_dp, stat=ierr)
             call check_allocate('cc_int%bjai', no_x_nv**2), ierr)
             allocate(cc_int%v_abci(nvl:nvu,nocc,nvl:nvu,nocc), source=0.0_dp, stat=ierr)
-            call check_allocate('cc_int%v_ciab', no_x_nv**2), ierr)
+            call check_allocate('cc_int%v_vovv', no_x_nv**2), ierr)
             allocate(cc_int%v_aijk(nvl:nvu,nocc,nvl:nvu,nvl:nvu), source=0.0_dp, stat=ierr)
-            call check_allocate('cc_int%v_jkai', no_x_nv*nvirt**2), ierr)
+            call check_allocate('cc_int%v_oovo', no_x_nv*nvirt**2), ierr)
             allocate(cc_int%v_ijkl(nocc,nocc,nocc,nocc), source=0.0_dp, stat=ierr)
-            call check_allocate('cc_int%v_klij', nocc**4), ierr)
+            call check_allocate('cc_int%v_oooo', nocc**4), ierr)
             allocate(cc_int%v_abcd(nvl:nvu,nvl:nvu,nvl:nvu,nvl:nvu), source=0.0_dp, stat=ierr)
-            call check_allocate('cc_int%v_cdab', nvirt**4), ierr)
+            call check_allocate('cc_int%v_vvvv', nvirt**4), ierr)
+
             allocate(temperi(nvu,nvu,nvu,nvu), source=0.0_dp, stat=ierr)
             call check_allocate('temperi', nvu**4, ierr)
             
@@ -425,70 +430,72 @@ module ccsd
                end do
             end do
 
-            cc_int%v_ijab = temperi(1:nocc,1:nocc,nvl:nvu,nvl:nvu)
-            cc_int%v_div_d = cc_int%v_ijab / D_ijab
-            cc_int%v_bjai = temperi(nvl:nvu,1:nocc,nvl:nvu,1:nocc)
-            cc_int%v_ciab = temperi(nvl:nvu,1:nocc,nvl:nvu,nvl:nvu)
-            cc_int%v_jkai = temperi(1:nocc,1:nocc,nvl:nvu,nvl:nvu)
-            cc_int%v_klij = temperi(1:nocc,1:nocc,1:nocc,1:nocc)
-            cc_int%v_cdab = temperi(nvl:nvu,nvl:nvu,nvl:nvu,nvl:nvu)
+            cc_int%v_oovv = temperi(1:nocc,1:nocc,nvl:nvu,nvl:nvu)
+            cc_int%v_div_d = cc_int%v_oovv / D_ijab
+            cc_int%v_vovo = temperi(nvl:nvu,1:nocc,nvl:nvu,1:nocc)
+            cc_int%v_vovv = temperi(nvl:nvu,1:nocc,nvl:nvu,nvl:nvu)
+            cc_int%v_oovo = temperi(1:nocc,1:nocc,nvl:nvu,nvl:nvu)
+            cc_int%v_oooo = temperi(1:nocc,1:nocc,1:nocc,1:nocc)
+            cc_int%v_vvvv = temperi(nvl:nvu,nvl:nvu,nvl:nvu,nvl:nvu)
 
             deallocate(temperi)
 
          end if
 
          write(iunit, '(1X, A)') 'Forming initial amplitude guesses...'
-         associate(doubles=>cc_amp%t_ijab, asym=>int_store%asym_spinorb)
          if (restricted) then
-            doubles = v_vid_d
+            doubles = v_div_d
          else
             doubles = asym(1:nocc,1:nocc,nvl:nvu,nvl:nvu)/cc_int%D_ijab
          end if
-         end associate
 
          write(iunit, '(1X, A)') 'Allocating intermediate tensors...'
          ! Allocate the intermediate tensors
-         associate(n=>sys%nbasis, nocc=>sys%nocc)
          if (restricted) then
             ! Two-index intermediates
-            allocate(cc_int%I_ai(nvl:nvu, nocc), source=0.0_dp, stat=ierr)
-            call check_allocate('cc_int%I_ai', no_x_nv, ierr)
-            allocate(cc_int%I_ba(nvl:nvu, nvl:nvu), source=0.0_dp, stat=ierr)
-            call check_allocate('cc_int%I_ba', (nvu-nvl+1)**2, ierr)
-            allocate(cc_int%I_ji_p(nocc, nocc), source=0.0_dp, stat=ierr)
-            call check_allocate('cc_int%I_ji_p', nocc**2, ierr)
-            allocate(cc_int%I_ji(nocc, nocc), source=0.0_dp, stat=ierr)
-            call check_allocate('cc_int%I_ji', nocc**2, ierr)
+            allocate(cc_int%I_vo(nvl:nvu, nocc), source=0.0_dp, stat=ierr)
+            call check_allocate('cc_int%I_vo', no_x_nv, ierr)
+            allocate(cc_int%I_vv(nvl:nvu, nvl:nvu), source=0.0_dp, stat=ierr)
+            call check_allocate('cc_int%I_vv', (nvu-nvl+1)**2, ierr)
+            allocate(cc_int%I_oo_p(nocc, nocc), source=0.0_dp, stat=ierr)
+            call check_allocate('cc_int%I_oo_p', nocc**2, ierr)
+            allocate(cc_int%I_oo(nocc, nocc), source=0.0_dp, stat=ierr)
+            call check_allocate('cc_int%I_oo', nocc**2, ierr)
 
             ! Four-index intermediates
-            allocate(cc_int%c_ijab(nocc,nocc,nvl:nvu,nvl:nvu), source=0.0_dp, stat=ierr)
-            call check_allocate('cc_int%c_ijab', no_x_nv**2, ierr)
-            allocate(cc_int%x_bjia(nvl:nvu,nocc,nocc,nvl:nvu), source=0.0_dp, stat=ierr)
-            call check_allocate('cc_int%x_bjia', no_x_nv**2, ierr)
-            allocate(cc_int%I_klij(nocc,nocc,nocc,nocc), source=0.0_dp, stat=ierr)
-            call check_allocate('cc_int%I_klij', nocc**4, ierr)
-            allocate(cc_int%I_jbca(nocc,nvl:nvu,nvl:nvu,nvl:nvu), source=0.0_dp, stat=ierr)
-            call check_allocate('cc_int%I_jbca', nocc*nvirt**3, ierr)
-            allocate(cc_int%I_bjia(nvl:nvu,nocc,nocc,nvl:nvu), source=0.0_dp, stat=ierr)
-            call check_allocate('cc_int%I_bjia', no_x_nv**2, ierr)
-            allocate(cc_int%I_ciab_p(nvl:nvu,nocc,nocc,nocc), source=0.0_dp, stat=ierr)
-            call check_allocate('cc_int%I_ciab_p', nvirt*nocc**3, ierr)
-            allocate(cc_int%I_jkia_p(nocc,nocc,nocc,nvl:nvu), source=0.0_dp, stat=ierr)
-            call check_allocate('cc_int%I_jkia_p', nvirt*nocc**3, ierr)
+            allocate(cc_int%c_oovv(nocc,nocc,nvl:nvu,nvl:nvu), source=0.0_dp, stat=ierr)
+            call check_allocate('cc_int%c_oovv', no_x_nv**2, ierr)
+            allocate(cc_int%x_voov(nvl:nvu,nocc,nocc,nvl:nvu), source=0.0_dp, stat=ierr)
+            call check_allocate('cc_int%x_voov', no_x_nv**2, ierr)
+            allocate(cc_int%I_oooo(nocc,nocc,nocc,nocc), source=0.0_dp, stat=ierr)
+            call check_allocate('cc_int%I_oooo', nocc**4, ierr)
+            allocate(cc_int%I_ovvv(nocc,nvl:nvu,nvl:nvu,nvl:nvu), source=0.0_dp, stat=ierr)
+            call check_allocate('cc_int%I_ovvv', nocc*nvirt**3, ierr)
+            allocate(cc_int%I_voov(nvl:nvu,nocc,nocc,nvl:nvu), source=0.0_dp, stat=ierr)
+            call check_allocate('cc_int%I_voov', no_x_nv**2, ierr)
+            allocate(cc_int%I_vovv_p(nvl:nvu,nocc,nocc,nocc), source=0.0_dp, stat=ierr)
+            call check_allocate('cc_int%I_vovv_p', nvirt*nocc**3, ierr)
+            allocate(cc_int%I_ooov_p(nocc,nocc,nocc,nvl:nvu), source=0.0_dp, stat=ierr)
+            call check_allocate('cc_int%I_ooov_p', nvirt*nocc**3, ierr)
 
          else
+            ! Two-index intermediates
             allocate(cc_int%F_vv(nvl:nvu,nvl:nvu), source=0.0_dp, stat=ierr)
             call check_allocate('cc_int%F_vv', nvirt**2, ierr)
             allocate(cc_int%F_oo(nocc,nocc), source=0.0_dp, stat=ierr)
             call check_allocate('cc_int%F_oo', nocc**2, ierr)
             allocate(cc_int%F_ov(nocc,nvl:nvu), source=0.0_dp, stat=ierr)
             call check_allocate('cc_int%F_ov', no_x_nv, ierr)
+
+            ! Four-index intermediates
             allocate(cc_int%W_oooo(nocc,nocc,nocc,nocc), source=0.0_dp, stat=ierr)
             call check_allocate('cc_int%W_oooo', nocc**4, ierr)
             allocate(cc_int%W_vvvv(nvl:nvu,nvl:nvu,nvl:nvu,nvl:nvu), source=0.0_dp, stat=ierr)
             call check_allocate('cc_int%W_vvvv', nvirt**4, ierr)
             allocate(cc_int%W_ovvo(nocc,nvl:nvu,nvl:nvu,nocc), source=0.0_dp, stat=ierr)
             call check_allocate('cc_int%W_ovvo', no_x_nv**2, ierr)
+
+            ! Tau quantities
             allocate(cc_int%tau(nocc,nocc,nvl:nvu,nvl:nvu), source=0.0_dp, stat=ierr)
             call check_allocate('cc_int%tau', no_x_nv**2, ierr)
             allocate(cc_int%tau_tilde(nocc,nocc,nvl:nvu,nvl:nvu), source=0.0_dp, stat=ierr)
@@ -815,6 +822,77 @@ module ccsd
 
          end associate
       end subroutine build_W
+
+      subroutine update_amplitudes_restricted(sys, cc_amp, int_store, cc_int)
+         ! Perform the CC amplitude equations for the spin-free formulation
+         ! In:
+         !     sys: system under study.
+         !     int_store: integral information
+         ! In/out:
+         !     cc_amp: CC amplitudes being updated
+         !     cc_int: CC intermediates used in computing the updates
+
+         use integrals, only: int_store_t
+
+         type(system_t), intent(in) :: sys
+         type(int_store_t), intent(in) :: int_store
+         type(cc_amp_t), intent(inout) :: cc_amp
+         type(cc_int_t), intent(inout) :: cc_int
+
+         real(dp), dimension(:,:,:,:), allocatable :: reshape_tmp1, reshape_tmp2
+
+         associate(tmp_t1=>cc_int%tmp_tia,tmp_t2=>cc_int%tmp_tijab,t1=>cc_amp%t_ia,t2=>cc_amp%t_ijab,asym=>int_store%asym_spinorb, &
+            F_oo=>cc_int%F_oo,F_ov=>cc_int%F_ov,F_vv=>cc_int%F_vv,D_ia=>cc_int%D_ia,D_ijab=>cc_int%D_ijab,W_oooo=>cc_int%W_oooo, &
+            W_ovvo=>cc_int%W_ovvo,tau=>cc_int%tau,tau_tilde=>cc_int%tau_tilde,nocc=>sys%nocc,nbasis=>sys%nbasis,&
+            W_vvvv=>cc_int%W_vvvv)
+
+         ! Update T1
+         
+         ! t_i^e * I_e^a, a simple matmul
+         ! Benchmarking suggests that the Fortran intrinsic matmul beats threaded dgemm, not to mention naive OpenMP. So here we go
+         tmp_t1 = matmul(t1, I_vv)
+
+         ! -I'_i^m * t_m^a, another simple matmul
+         tmp_t1 = tmp_t1 - matmul(I_oo_p, t1)
+
+         ! I_e^m ( 2 t_mi^ea - t_im^ea ) + t_m^e (2 v_ei^ma - v_ei%am)
+         !$omp parallel do default(none)&
+         !$omp schedule(static,10) collapse(2)&
+         !$omp shared(nvl, nvu, nocc, tmp_t1, I_vo, t2, v_oovv, v_vovo)
+         do a = nvl, nvu
+            do i = 1, nocc
+               tmp_t1(i,a) = tmp_t1(i,a) + 2*sum(I_vo*transpose(t2(:,i,:,a))) - sum(transpose(I_vo)*t2(i,:,:,a))
+                           + 2*sum(t1*v_oovv(:,i,:,a)) - sum(transpose(t1), v_vovo(:,i,a,:))
+            end do
+         end do
+         !$omp end parallel
+
+         ! - v_ei^mn (2 t_mn^ea - t_mn^ae) 
+         ! This is a clear case where we can benefit from dgemm 
+         ! (see my benchmarking script at https://github.com/brianz98/fortran-tensor-benchmarking).
+         ! As the number of contracted indices becomes large, the (significant) overhead of dgemm becomes negligible.
+
+         ! v_ei^mn would require a tensor of type v_vooo, but we only have v_oovo, which is permutationally equivalent
+         ! v_ei^mn would be accessed by v_oovo(m,i,e,n), which is why we need order=2,1,4,3 to permute it into (i,m,n,e)
+         ! We would like to not store the reshaped arrays but gfortran doesn't like big arrays on the stack (ifort has the 
+         ! handy -heap-arrays flag that directs them to the heap, but apparently there's no such flag in gfortran..)
+         ! Anyways, we'll have to resort to using temporary arrays to ensure portability..
+         ! Note that the temporary arrays do not need to be allocated beforehand, which is a relief..
+         reshape_tmp1 = reshape(v_oovo,(/nocc,nocc,nocc,nvirt/),order=(/2,1,4,3/))
+         reshape_tmp2 = reshape(t2,(/nocc,nocc,nvirt,nvirt/),order=(/1,2,4,3/))
+         call dgemm_wrapper('N','N',nocc,nvirt,nocc**2*nvirt,reshape_tmp1,2*t2-reshape_tmp2,tmp_t1_s)
+         tmp_t1 = tmp_t1 - tmp_t1_s
+
+         ! + v_ef^ma (2 t_mi^ef - t_im^ef)
+         ! Let's massage the second quantity (the stuff in the brackets) into (i,m,e,f) and the first into (m,e,f,a) and voila
+         reshape_tmp1 = reshape(v_vovv,(/nocc,nvirt,nvirt,nvirt/),order=(/2,4,3,1/))
+         reshape_tmp2 = reshape(t2,(/nocc,nocc,nvirt,nvirt/),order=(/2,1,3,4/))
+         call dgemm_wrapper('N','N',nocc,nvirt,nocc*nvirt**2,2*reshape_tmp2-t2,reshape_tmp1,tmp_t1_s)
+         tmp_t1 = tmp_t1 + tmp_t1_s
+
+         end associate
+
+      end subroutine update_amplitudes_restricted
 
       subroutine update_amplitudes(sys, cc_amp, int_store, cc_int)
          ! Perform the CC amplitude equations
