@@ -67,26 +67,6 @@ module linalg
                     A, outer_row, B, inner_dim, 0.0_dp, C, outer_row)
       end subroutine dgemm_wrapper
 
-      subroutine tensor_dot_product_2_4(A, B, C)
-         ! Computes tensor contractions of the form C_i^a = A_e^m B_mi^ea
-         real(p), intent(in) :: A(:,:), B(:,:,:,:)
-         real(p), intent(inout) :: C(:,:)
-         integer :: cu, cl, au, al, bu, bl
-         integer :: cll, clu, cul, cuu, all, alu, aul, auu
-
-         cll = lbound(C, dim=1); clu = ubound(C, dim=1); cul = lbound(C, dim=2); cuu = ubound(C, dim=2)
-         all = lbound(A, dim=1); alu = ubound(A, dim=1); aul = lbound(A, dim=2); auu = ubound(A, dim=2)
-
-         !$omp parallel default(none)&
-         do cu = cul, cuu
-            do cl = cll, clu
-               tmp = 0.0_p
-               do au = aul, auu
-                  do al = all, alu
-                     tmp = tmp + A(al, au)*B(au,cl,)
-
-      end subroutine
-
       elemental subroutine zero_mat(matel)
          ! Zero out entries smaller than machine precision
 
