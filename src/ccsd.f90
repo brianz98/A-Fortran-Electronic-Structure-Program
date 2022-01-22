@@ -878,6 +878,9 @@ module ccsd
          ! handy -heap-arrays flag that directs them to the heap, but apparently there's no such flag in gfortran..)
          ! Anyways, we'll have to resort to using temporary arrays to ensure portability..
          ! Note that the temporary arrays do not need to be allocated beforehand, which is a relief..
+         
+         ! We further need a scratch t1 matrix as dgemm 'C' is overwritten
+         allocate(tmp_t1_s(nocc,nvirt))
          reshape_tmp1 = reshape(v_oovo,(/nocc,nocc,nocc,nvirt/),order=(/2,1,4,3/))
          reshape_tmp2 = reshape(t2,(/nocc,nocc,nvirt,nvirt/),order=(/1,2,4,3/))
          call dgemm_wrapper('N','N',nocc,nvirt,nocc**2*nvirt,reshape_tmp1,2*t2-reshape_tmp2,tmp_t1_s)
@@ -889,6 +892,83 @@ module ccsd
          reshape_tmp2 = reshape(t2,(/nocc,nocc,nvirt,nvirt/),order=(/2,1,3,4/))
          call dgemm_wrapper('N','N',nocc,nvirt,nocc*nvirt**2,2*reshape_tmp2-t2,reshape_tmp1,tmp_t1_s)
          tmp_t1 = tmp_t1 + tmp_t1_s
+
+         tmp_t1 = tmp_t1/D_ia
+         ! We no longer need the t1 scratch matrix, but now we need a t2 one
+         deallocate(tmp_t1_s)
+
+         allocate(tmp_t2_s(nocc,nocc,nvirt,nvirt))
+         ! Now update T2
+         tmp_t2 = v_oovv
+
+         ! -t_ij^ae*I_e^b, a nice dgemm
+         call dgemm_wrapper('N','N',nocc**2*nvirt,nvirt,nvirt,t2,I_vv,tmp_t2_s)
+         tmp_t2 = tmp_t2 + tmp_t2_s
+
+         ! t_im^ab*I_j^m, benchmarking shows naive OMP is the fastest
+         !$omp parallel do default(none)&
+         !$omp schedule(static,10) collapse(2)&
+         !$omp shared(nvl, nvu, nocc, tmp_t2, I_oo, t2)
+         do b = nvl, nvu
+            do a = nvl, nvu
+               do j = 1, nocc
+                  do i = 1, nocc
+                     tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) - sum(t2(i,:,a,b)*I_oo(j,:))
+                  end do
+               end do
+            end do
+         end do
+         !$omp end parallel
+
+         ! 1/2 v_ef^ab c_ij^ef, nice dgemm again
+         call dgemm_wrapper('N','N',nocc**2,nvirt**2,nvirt**2,c_oovv,v_vvvv,tmp_t2_s)
+         tmp_t2 = tmp_t2 + tmp_t2_s/2
+
+         ! 1/2 c_mn^ab I_ij^mn, nice dgemm
+         call dgemm_wrapper('N','N',nocc**2,nvirt**2,nocc**2,I_oooo,c_oovv,tmp_t2_s)
+         tmp_t2 = tmp_t2 + tmp_t2_s/2
+
+         ! -t_mj^ae I_ie^mb - I_ie^ma t_mj^ab + (2t_mi^ea - t_im^ea) I_ej^mb, seems hopeless, use OMP
+         !$omp parallel do default(none)&
+         !$omp schedule(static,10) collapse(4)&
+         !$omp shared(nvl, nvu, nocc, tmp_t2, I_oo, t2)&
+         !$omp private(tmp)
+         do b = nvl, nvu
+            do a = nvl, nvu
+               do j = 1, nocc
+                  do i = 1, nocc
+                     tmp = 0.0_dp
+                     do e = nvl, nvu
+                        do m = 1, nocc
+                           tmp = tmp - t2(m,j,a,e)*I_ovoo(i,e,m,b) - I_ovoo(i,e,m,a)*t2(m,j,a,b) &
+                                 + 2*(t2(m,i,e,a)-t2(i,m,e,a))*I_voov(e,j,m,b)
+                        end do
+                     end do
+                     tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) + tmp
+                  end do
+               end do
+            end do
+         end do
+         !$omp end parallel
+
+         ! t_i^e I'_ej^ab - t_m^a I'_ij^mb, first dgemm, second OMP
+         call dgemm('N','N',nocc,nocc*nvirt**2,nvirt,t1,I_vovv_p,tmp_t2_s)
+         tmp_t2 = tmp_t2 + tmp_t2_s
+
+         !$omp parallel do default(none)&
+         !$omp schedule(static,10) collapse(2)&
+         !$omp shared(nvl, nvu, nocc, tmp_t2, I_ooov_p, t1)
+         do b = nvl, nvu
+            do a = nvl, nvu
+               do j = 1, nocc
+                  do i = 1, nocc
+                     tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) - sum(t1(:,a)*I_ooov_p(i,j,:,b))
+                  end do
+               end do
+            end do
+         end do
+         !$omp end parallel
+
 
          end associate
 
