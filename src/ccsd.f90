@@ -881,6 +881,7 @@ module ccsd
          
          ! We further need a scratch t1 matrix as dgemm 'C' is overwritten
          allocate(tmp_t1_s(nocc,nvirt))
+
          reshape_tmp1 = reshape(v_oovo,(/nocc,nocc,nocc,nvirt/),order=(/2,1,4,3/))
          reshape_tmp2 = reshape(t2,(/nocc,nocc,nvirt,nvirt/),order=(/1,2,4,3/))
          call dgemm_wrapper('N','N',nocc,nvirt,nocc**2*nvirt,reshape_tmp1,2*t2-reshape_tmp2,tmp_t1_s)
@@ -901,6 +902,12 @@ module ccsd
          ! Now update T2
          tmp_t2 = v_oovv
 
+         ! We have a permutation operator P(ia/jb), after v_ij^ab, meaning i becomes j and a becomes b, 
+         ! and conveniently what we actually need to do to perform the action of the permutation is to just reshape
+         ! tmp_t2 from (i,j,a,b) to (j,i,b,a) and accumulate the quantities in exactly the same way again, and then 
+         ! at the end we reshape back.
+
+         do iperm = 1, 2
          ! -t_ij^ae*I_e^b, a nice dgemm
          call dgemm_wrapper('N','N',nocc**2*nvirt,nvirt,nvirt,t2,I_vv,tmp_t2_s)
          tmp_t2 = tmp_t2 + tmp_t2_s
@@ -968,6 +975,17 @@ module ccsd
             end do
          end do
          !$omp end parallel
+
+         ! Again, it would be nice if we can just say tmp_t2 = reshape(tmp_t2,...) but gfortran can't do it
+         tmp_t2_s = reshape(tmp_t2, (/nocc,nocc,nvirt,nvirt/),order=(/2,1,4,3/))
+         tmp_t2 = tmp_t2_s
+         end do
+         tmp_t2_s = reshape(tmp_t2, (/nocc,nocc,nvirt,nvirt/),order=(/2,1,4,3/))
+         tmp_t2 = tmp_t2_s
+
+         !$omp parallel workshare
+         t1 = tmp_t1
+         t2 = tmp_t2/D_ijab
 
 
          end associate
@@ -1084,6 +1102,7 @@ module ccsd
          !$omp end do
          !$omp end parallel
          t1 = tmp_t1
+         ! Benchmarking shows we don't have to worry about doing this without parallelisation
          t2 = tmp_t2/D_ijab
          end associate
 
