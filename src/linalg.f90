@@ -55,6 +55,18 @@ module linalg
 
       end subroutine linsolve
 
+      subroutine dgemm_wrapper(transA, transB, outer_row, outer_col, inner_dim, A, B, C)
+         ! Wraps around dgemm with fewer arguments
+
+         character(1), intent(in) :: transA, transB
+         integer, intent(in) :: outer_row, outer_col, inner_dim
+         real(p), intent(in) :: A(*), B(*)
+         real(p), intent(inout) :: C(*)
+
+         call dgemm(transA, transB, outer_row, outer_col, inner_dim, 1.0_dp, &
+                    A, outer_row, B, inner_dim, 0.0_dp, C, outer_row)
+      end subroutine dgemm_wrapper
+
       elemental subroutine zero_mat(matel)
          ! Zero out entries smaller than machine precision
 
