@@ -846,8 +846,10 @@ module ccsd
             W_ovvo=>cc_int%W_ovvo,tau=>cc_int%tau,tau_tilde=>cc_int%tau_tilde,nocc=>sys%nocc,nbasis=>sys%nbasis,&
             W_vvvv=>cc_int%W_vvvv)
 
-         ! Update T1
-         
+         ! #########################################################################################################################
+         ! ##################################################### T1 Updates ########################################################
+         ! #########################################################################################################################
+
          ! t_i^e * I_e^a, a simple matmul
          ! Benchmarking suggests that the Fortran intrinsic matmul beats threaded dgemm, not to mention naive OpenMP. So here we go
          tmp_t1 = matmul(t1, I_vv)
@@ -888,18 +890,21 @@ module ccsd
          tmp_t1 = tmp_t1 - tmp_t1_s
 
          ! + v_ef^ma (2 t_mi^ef - t_im^ef)
-         ! Let's massage the second quantity (the stuff in the brackets) into (i,m,e,f) and the first into (m,e,f,a) and voila
+         ! Let's massage the second quantity (the stuff in the brackets) into (i,m,e,f) and the first into (m,e,f,a) et voila
          reshape_tmp1 = reshape(v_vovv,(/nocc,nvirt,nvirt,nvirt/),order=(/2,4,3,1/))
          reshape_tmp2 = reshape(t2,(/nocc,nocc,nvirt,nvirt/),order=(/2,1,3,4/))
          call dgemm_wrapper('N','N',nocc,nvirt,nocc*nvirt**2,2*reshape_tmp2-t2,reshape_tmp1,tmp_t1_s)
          tmp_t1 = tmp_t1 + tmp_t1_s
 
-         tmp_t1 = tmp_t1/D_ia
          ! We no longer need the t1 scratch matrix, but now we need a t2 one
          deallocate(tmp_t1_s)
 
          allocate(tmp_t2_s(nocc,nocc,nvirt,nvirt))
-         ! Now update T2
+
+         ! #########################################################################################################################
+         ! ##################################################### T2 Updates ########################################################
+         ! #########################################################################################################################         
+
          tmp_t2 = v_oovv
 
          ! We have a permutation operator P(ia/jb), after v_ij^ab, meaning i becomes j and a becomes b, 
@@ -977,16 +982,16 @@ module ccsd
          !$omp end parallel
 
          ! Again, it would be nice if we can just say tmp_t2 = reshape(tmp_t2,...) but gfortran can't do it
+         ! This is performed once after iperm = 1 iteration, which reshapes (i,j,a,b) into (j,i,b,a) and then once more
+         ! after the iperm = 2 which reshapes it back into (i,j,a,b)
          tmp_t2_s = reshape(tmp_t2, (/nocc,nocc,nvirt,nvirt/),order=(/2,1,4,3/))
          tmp_t2 = tmp_t2_s
          end do
-         tmp_t2_s = reshape(tmp_t2, (/nocc,nocc,nvirt,nvirt/),order=(/2,1,4,3/))
-         tmp_t2 = tmp_t2_s
 
-         !$omp parallel workshare
-         t1 = tmp_t1
+         ! We now write the cluster amplitudes into the actual tensors
+         ! Benchmarking shows we don't have to worry about doing this without parallelisation
+         t1 = tmp_t1/D_ia
          t2 = tmp_t2/D_ijab
-
 
          end associate
 
