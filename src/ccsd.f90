@@ -22,6 +22,9 @@ module ccsd
       ! Energy denominators (Eqs. 12-13)
       real(dp), allocatable :: D_ia(:,:), D_ijab(:,:,:,:)
       real(dp), allocatable :: tmp_tia(:,:), tmp_tijab(:,:,:,:)
+
+      ! Various slices of asymmetrised integrals
+      real(dp), dimension(:,:,:,:), allocatable :: oooo, ovoo, oovo, ooov, oovv, ovov, ovvv, vovv, vvvv, ovvo
    end type cc_int_t
 
    type diis_cc_t
@@ -134,7 +137,7 @@ module ccsd
 
          write(iunit, '(1X, A)') 'Checking that the permuational symmetry of the antisymmetrised integrals hold...'
          err = 0.0_dp
-         associate(nbasis=>sys%nbasis, asym=>int_store%asym_spinorb)
+         associate(nbasis=>sys%nbasis,nocc=>sys%nocc,nvirt=>sys%nvirt,asym=>int_store%asym_spinorb)
          do p = 1, 2*nbasis
             do q = 1, p
                do r = 1, p
@@ -145,8 +148,7 @@ module ccsd
                end do
             end do
          end do
-         end associate
-
+         
          if (err > depsilon) then
             write(iunit, '(1X, A, 1X, E15.6)') 'Permutational symmetry error:', err
             call error('ccsd::do_ccsd', 'Permutational symmetry of antisymmetrised integrals does not hold')
@@ -157,6 +159,34 @@ module ccsd
          write(iunit, '(1X, A, 1X, F8.6, A)') 'Time taken:', real(t1-t0, kind=dp)/c_rate, " s"
          write(iunit, *)
          t0=t1
+
+         write(iunit, '(1X, A)') 'Forming slices of antisymmetrised spinorbital ERIs'
+
+         ! We store only the slices needed: note that since we're moving to restricted indices,
+         ! the virtuals are 1:2*nvirt instead of 2*nocc+1:2*nbasis
+         ! All 4 occupied
+         allocate(cc_int%oooo, source=asym(1:2*nocc,1:2*nocc,1:2*nocc,1:2*nocc))
+         ! 3 occupied, 1 virtual, of which there are 3 types: ovoo, oovo, ooov, which are all related by permutational sym
+         allocate(cc_int%ooov, source=asym(1:2*nocc,1:2*nocc,1:2*nocc,2*nocc+1:2*nbasis))
+         !cc_int%ovoo = reshape(cc_int%ooov, (/2*nocc,2*nvirt,2*nocc,2*nocc/), order=(/1,4,3,2/))
+         cc_int%oovo = -reshape(cc_int%ooov, (/2*nocc,2*nocc,2*nvirt,2*nocc/), order=(/1,2,4,3/))
+         ! 2o2v
+         allocate(cc_int%oovv, source=asym(1:2*nocc,1:2*nocc,2*nocc+1:2*nbasis,2*nocc+1:2*nbasis))
+         cc_int%ovvo = -reshape(cc_int%oovv, (/2*nocc,2*nvirt,2*nvirt,2*nocc/), order=(/1,4,3,2/))
+         ! 1o3v
+         allocate(cc_int%ovvv, source=asym(1:2*nocc,2*nocc+1:2*nbasis,2*nocc+1:2*nbasis,2*nocc+1:2*nbasis))
+         !cc_int%vovv = -reshape(cc_int%ovvv, (/2*nvirt,2*nocc,2*nvirt,2*nvirt/), order=(/2,1,3,4/))
+         ! 4v
+         allocate(cc_int%vvvv, source=asym(2*nocc+1:2*nbasis,2*nocc+1:2*nbasis,2*nocc+1:2*nbasis,2*nocc+1:2*nbasis))
+
+         call system_clock(t1)
+         if (t1<t0) t1 = t1+c_max
+         write(iunit, '(1X, A, 1X, F8.6, A)') 'Time taken:', real(t1-t0, kind=dp)/c_rate, " s"
+         write(iunit, *)
+         t0=t1
+
+         ! [todo]: do we keep the unsliced, unrestricted asymmetrised ERI array?
+         end associate
 
          ! ############################################
          ! Initialise intermediate arrays and DIIS data
@@ -710,73 +740,68 @@ module ccsd
          ! In/out:
          !     cc_int: CC intermediates with the F matrices updated.
 
+         use linalg, only: dgemm_wrapper
+
          type(system_t), intent(in) :: sys
          type(cc_amp_t), intent(in) :: cc_amp
          real(p), intent(in) :: asym(:,:,:,:)
          type(cc_int_t), intent(inout) :: cc_int
          integer :: m, n, i, j, e, f, b, a
          real(p) :: x
+         real(p), dimension(:,:,:,:), allocatable :: scratch, reshape_scratch
 
-         associate(nbasis=>sys%nbasis, nocc=>sys%nocc, t_ia=>cc_amp%t_ia, t_ijab=>cc_amp%t_ijab,&
+         associate(nbasis=>sys%nbasis, nocc=>sys%nocc, nvirt=>sys%nvirt, t1=>cc_amp%t_ia, t2=>cc_amp%t_ijab,&
             W_oooo=>cc_int%W_oooo, W_ovvo=>cc_int%W_ovvo, tau=>cc_int%tau, W_vvvv=>cc_int%W_vvvv)
          W_oooo = 0.0_p
          W_ovvo = 0.0_p
-         !$omp parallel default(none) &
-         !$omp private(m, n, i, j, e, f, b, x, a) &
-         !$omp shared(sys, cc_int, cc_amp, asym)
-
+         
          ! Instead of laying it out like (m,n,i,j) we use (i,j,m,n) because then the contraction tau_mn^ab W_mnij can be processed
          ! by a simple dgemm call
-         !$omp do schedule(static, 10) collapse(4)
-         do n = 1, 2*nocc
-            do m = 1, 2*nocc
-               do j = 1, 2*nocc
-                  do i = 1, 2*nocc
-                     W_oooo(i,j,m,n) = asym(i,j,m,n)
-                     do e = 2*nocc+1, 2*nbasis
-                        W_oooo(i,j,m,n) = W_oooo(i,j,m,n) + t_ia(j,e)*asym(e,i,n,m) - t_ia(i,e)*asym(e,j,n,m)
-                        do f = 2*nocc+1, 2*nbasis
-                           W_oooo(i,j,m,n) = W_oooo(i,j,m,n) - 0.5*t_ijab(j,i,f,e)*asym(f,e,m,n)
-                        end do
-                     end do
-                  end do
-               end do
-            end do
-         end do
-         !$omp end do
+         allocate(scratch, mold=W_oooo)
 
-         ! [TODO]: make a switch to on-the-fly W_vvvv computation, for when memory is limited
-         ! Similarly, we order it (e,f,a,b) for the contraction tau_ij^ef W_abef
-         !$omp do schedule(static, 10) collapse(4)
-         do b = 2*nocc+1, 2*nbasis
-            do a = 2*nocc+1, 2*nbasis
-               do f = 2*nocc+1, 2*nbasis
-                  do e = 2*nocc+1, 2*nbasis
-                     W_vvvv(e,f,a,b) = asym(e,f,a,b)
-                     do n = 1, 2*nocc
-                        W_vvvv(e,f,a,b) = W_vvvv(e,f,a,b) + t_ia(n,b)*asym(n,a,e,f) - t_ia(n,a)*asym(n,b,e,f)
-                     end do
-                  end do
-               end do
-            end do
-         end do
-         !$omp end do
+         call dgemm('N','T',8*nocc**3,2*nocc,2*nvirt,cc_int%ooov,t1,scratch)
+         W_oooo = cc_int%oooo + scratch
 
+         reshape_scratch = reshape(scratch, (/2*nocc,2*nocc,2*nocc,2*nocc/), order=(/1,2,4,3/))
+         W_oooo = W_oooo - reshape_scratch
+
+         reshape_scratch = reshape(tau, (/2*nvirt,2*nvirt,2*nocc,2*nocc/), order=(/3,4,1,2/))
+         call dgemm('N','N',4*nocc**2,4**nocc**2,4*nvirt**2,cc_int%oovv,reshape_scratch,scratch)
+         W_oooo = W_oooo + scratch/2
+
+         reshape_scratch = reshape(W_oooo, (/2*nocc,2*nocc,2*nocc,2*nocc/), order=(/3,4,1,2/))
+         W_oooo = reshape_scratch
+
+         deallocate(scratch)
+         allocate(scratch, mold=W_vvvv)
+
+         ! - P_(ab) t_m^b <am||ef> = + P_(ab) (t_b^m)^T <ma||ef>, plus another sign change, which is most easily explained 
+         ! if we look at it by element: t_b^m <ma||ef> = \sum_m t_b^m <ma||ef> = -\sum_m t_b^m <am||ef>
+         call dgemm_wrapper('T','N',2*nvirt,8*nvirt**3,2*nocc,t1,cc_int%ovvv,scratch)
+         W_vvvv = cc_int%vvvv - scratch
+         reshape_scratch = reshape(scratch,(/2*nvirt,2*nvirt,2*nvirt,2*nvirt/),order=(/2,1,3,4/))
+         W_vvvv = W_vvvv + scratch
+
+         deallocate(scratch)
+         allocate(scratch, mold=W_ovvo)
+
+         call dgemm_wrapper('N','T',8*nocc*nvirt**2,2*nocc,2*nvirt,cc_int%ovvo,t1,scratch)
+         W_ovvo = cc_int%ovvo + scratch
+         call dgemm_wrapper('T','N',2*nvirt,8*nocc**2*nvirt,2*nocc,t1,cc_int%oovo,scratch)
+         W_ovvo = W_ovvo - scratch
+
+         !$omp parallel default(none) &
+         !$omp private(x) &
+         !$omp shared(cc_amp,asym)
          !$omp do schedule(static, 10) collapse(4)
          do j = 1, 2*nocc
             do e = 2*nocc+1, 2*nbasis
                do b = 2*nocc+1, 2*nbasis
                   do m = 1, 2*nocc
-                     W_ovvo(m,b,e,j) = asym(m,b,e,j)
-                     do f = 2*nocc+1, 2*nbasis
-                        W_ovvo(m,b,e,j) = W_ovvo(m,b,e,j) - t_ia(j,f)*asym(f,e,m,b)
-                     end do
-
                      do n = 1, 2*nocc
-                        x = t_ia(n,b)
-                        W_ovvo(m,b,e,j) = W_ovvo(m,b,e,j) + x*asym(n,m,e,j)
+                        x = t1(n,b)
                         do f = 2*nocc+1, 2*nbasis
-                           W_ovvo(m,b,e,j) = W_ovvo(m,b,e,j) - (0.5*t_ijab(j,n,f,b) + x*t_ia(j,f)) * asym(f,e,n,m)
+                           W_ovvo(m,b,e,j) = W_ovvo(m,b,e,j) - (0.5*t2(j,n,f,b) + x*t1(j,f)) * asym(f,e,n,m)
                         end do
                      end do
                   end do
