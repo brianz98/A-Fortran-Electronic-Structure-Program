@@ -912,7 +912,6 @@ module ccsd
          ! tmp_t2 from (i,j,a,b) to (j,i,b,a) and accumulate the quantities in exactly the same way again, and then 
          ! at the end we reshape back.
 
-         do iperm = 1, 2
          ! -t_ij^ae*I_e^b, a nice dgemm
          call dgemm_wrapper('N','N',nocc**2*nvirt,nvirt,nvirt,t2,I_vv,tmp_t2_s)
          tmp_t2 = tmp_t2 + tmp_t2_s
@@ -981,12 +980,10 @@ module ccsd
          end do
          !$omp end parallel
 
+         ! P(ia/jb) just means we swap i/j and a/b and add it back to the tensor
          ! Again, it would be nice if we can just say tmp_t2 = reshape(tmp_t2,...) but gfortran can't do it
-         ! This is performed once after iperm = 1 iteration, which reshapes (i,j,a,b) into (j,i,b,a) and then once more
-         ! after the iperm = 2 which reshapes it back into (i,j,a,b)
          tmp_t2_s = reshape(tmp_t2, (/nocc,nocc,nvirt,nvirt/),order=(/2,1,4,3/))
-         tmp_t2 = tmp_t2_s
-         end do
+         tmp_t2 = tmp_t2 + tmp_t2_s
 
          ! We now write the cluster amplitudes into the actual tensors
          ! Benchmarking shows we don't have to worry about doing this without parallelisation
