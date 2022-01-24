@@ -15,6 +15,7 @@ The end goal of this project will be performing HF, MP2, CCSD, and CCSD(T), as p
 - [X] CCSD(T) without symmetry
 - [X] DIIS acceleration for CCSD iterations
 - [X] Loop optimisations - cache
+- [X] User input file: level of theory, tolerances
 - [ ] Loop optimisations - using permutational symmetry
 - [ ] Adapting Hartree-Fock with symmetry
 - [ ] Ditto for MP2
@@ -22,7 +23,6 @@ The end goal of this project will be performing HF, MP2, CCSD, and CCSD(T), as p
 - [ ] Ditto for CCSD(T)
 - [ ] MPI parallelisation
 - [ ] GPU adaptation for MP2 and CCSD/(T)
-- [ ] User input file: level of theory, tolerances
 
 ## Installation guide
 To get started, clone this directory by
