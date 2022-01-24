@@ -604,7 +604,7 @@ module ccsd
             !$omp parallel do default(none) &
             !$omp private(i,j,a,b,ia,ja,x) &
             !$omp shared(sys, cc_amp, cc_int) &
-            !$omp schedule(runtime) collapse(2)
+            !$omp schedule(static, 10) collapse(2)
             do b = 2*nocc+1, 2*n
                do a = 2*nocc+1, 2*n
                   do j = 1, 2*nocc
@@ -641,7 +641,7 @@ module ccsd
 
          associate(nbasis=>sys%nbasis, nocc=>sys%nocc, t_ia=>cc_amp%t_ia, t_ijab=>cc_amp%t_ijab,&
             F_vv=>cc_int%F_vv, F_oo=>cc_int%F_oo, F_ov=>cc_int%F_ov, tau_tilde=>cc_int%tau_tilde)
-         ! F_ae = \sum_{mf} t_m^f * <ma||fe> - 0.5 \sum_{mnf} \tau~_{mn}^{af} <mn||ef>
+         
          F_vv = 0.0_p
          F_oo = 0.0_p
          F_ov = 0.0_p
@@ -650,7 +650,8 @@ module ccsd
          !$omp private(a, e, f, m, n, i) &
          !$omp shared(sys, cc_int, cc_amp, asym)
 
-         !$omp do schedule(runtime) collapse(2)
+         ! F_ae = \sum_{mf} t_m^f * <ma||fe> - 0.5 \sum_{mnf} \tau~_{mn}^{af} <mn||ef>
+         !$omp do schedule(static, 10) collapse(2)
          do a = 2*nocc+1, 2*nbasis
             do e = 2*nocc+1, 2*nbasis
                do m = 1, 2*nocc
@@ -666,7 +667,7 @@ module ccsd
          !$omp end do
 
          ! F_mi = \sum_{en} t_n^e <mn||ie> + 0.5 \sum_{nef} \tau~_{in}^{ef} <mn||ef>
-         !$omp do schedule(runtime) collapse(2)
+         !$omp do schedule(static, 10) collapse(2)
          do m = 1, 2*nocc
             do i = 1, 2*nocc
                do e = 2*nocc+1, 2*nbasis
@@ -682,7 +683,7 @@ module ccsd
          !$omp end do
 
          ! F_me = \sum_{nf} t_n^f * <mn||ef>
-         !$omp do schedule(runtime) collapse(2)
+         !$omp do schedule(static, 10) collapse(2)
          do m = 1, 2*nocc
             do e = 2*nocc+1, 2*nbasis
                do n = 1, 2*nocc
@@ -724,16 +725,18 @@ module ccsd
          !$omp private(m, n, i, j, e, f, b, x, a) &
          !$omp shared(sys, cc_int, cc_amp, asym)
 
-         !$omp do schedule(runtime) collapse(4)
-         do m = 1, 2*nocc
-            do n = 1, 2*nocc
-               do i = 1, 2*nocc
-                  do j = 1, 2*nocc
-                     W_oooo(m,n,i,j) = asym(m,n,i,j)
+         ! Instead of laying it out like (m,n,i,j) we use (i,j,m,n) because then the contraction tau_mn^ab W_mnij can be processed
+         ! by a simple dgemm call
+         !$omp do schedule(static, 10) collapse(4)
+         do n = 1, 2*nocc
+            do m = 1, 2*nocc
+               do j = 1, 2*nocc
+                  do i = 1, 2*nocc
+                     W_oooo(i,j,m,n) = asym(i,j,m,n)
                      do e = 2*nocc+1, 2*nbasis
-                        W_oooo(m,n,i,j) = W_oooo(m,n,i,j) + t_ia(j,e)*asym(e,i,n,m) - t_ia(i,e)*asym(e,j,n,m)
+                        W_oooo(i,j,m,n) = W_oooo(i,j,m,n) + t_ia(j,e)*asym(e,i,n,m) - t_ia(i,e)*asym(e,j,n,m)
                         do f = 2*nocc+1, 2*nbasis
-                           W_oooo(m,n,i,j) = W_oooo(m,n,i,j) - 0.5*t_ijab(j,i,f,e)*asym(f,e,m,n)
+                           W_oooo(i,j,m,n) = W_oooo(i,j,m,n) - 0.5*t_ijab(j,i,f,e)*asym(f,e,m,n)
                         end do
                      end do
                   end do
@@ -743,14 +746,15 @@ module ccsd
          !$omp end do
 
          ! [TODO]: make a switch to on-the-fly W_vvvv computation, for when memory is limited
-         !$omp do schedule(runtime) collapse(4)
-         do f = 2*nocc+1, 2*nbasis
-            do e = 2*nocc+1, 2*nbasis
-               do b = 2*nocc+1, 2*nbasis
-                  do a = 2*nocc+1, 2*nbasis
-                     W_vvvv(a,b,e,f) = asym(a,b,e,f)
+         ! Similarly, we order it (e,f,a,b) for the contraction tau_ij^ef W_abef
+         !$omp do schedule(static, 10) collapse(4)
+         do b = 2*nocc+1, 2*nbasis
+            do a = 2*nocc+1, 2*nbasis
+               do f = 2*nocc+1, 2*nbasis
+                  do e = 2*nocc+1, 2*nbasis
+                     W_vvvv(e,f,a,b) = asym(e,f,a,b)
                      do n = 1, 2*nocc
-                        W_vvvv(a,b,e,f) = W_vvvv(a,b,e,f) + t_ia(n,b)*asym(n,a,e,f) - t_ia(n,a)*asym(n,b,e,f)
+                        W_vvvv(e,f,a,b) = W_vvvv(e,f,a,b) + t_ia(n,b)*asym(n,a,e,f) - t_ia(n,a)*asym(n,b,e,f)
                      end do
                   end do
                end do
@@ -758,7 +762,7 @@ module ccsd
          end do
          !$omp end do
 
-         !$omp do schedule(runtime) collapse(4)
+         !$omp do schedule(static, 10) collapse(4)
          do j = 1, 2*nocc
             do e = 2*nocc+1, 2*nbasis
                do b = 2*nocc+1, 2*nbasis
@@ -795,34 +799,37 @@ module ccsd
          !     cc_int: CC intermediates used in computing the updates
 
          use integrals, only: int_store_t
+         use linalg, only: dgemm_wrapper
 
          type(system_t), intent(in) :: sys
          type(int_store_t), intent(in) :: int_store
          type(cc_amp_t), intent(inout) :: cc_amp
          type(cc_int_t), intent(inout) :: cc_int
 
+         real(p), allocatable :: tmp_t2_s(:,:,:,:)
+
          integer :: i, j, a, b, m, n, e, f
-         
+
          associate(tmp_t1=>cc_int%tmp_tia,tmp_t2=>cc_int%tmp_tijab,t1=>cc_amp%t_ia,t2=>cc_amp%t_ijab,asym=>int_store%asym_spinorb, &
             F_oo=>cc_int%F_oo,F_ov=>cc_int%F_ov,F_vv=>cc_int%F_vv,D_ia=>cc_int%D_ia,D_ijab=>cc_int%D_ijab,W_oooo=>cc_int%W_oooo, &
-            W_ovvo=>cc_int%W_ovvo,tau=>cc_int%tau,tau_tilde=>cc_int%tau_tilde,nocc=>sys%nocc,nbasis=>sys%nbasis,&
+            W_ovvo=>cc_int%W_ovvo,tau=>cc_int%tau,tau_tilde=>cc_int%tau_tilde,nocc=>sys%nocc,nbasis=>sys%nbasis,nvirt=>sys%nvirt,&
             W_vvvv=>cc_int%W_vvvv)
 
          ! Update T1
+
+         tmp_t1 = matmul(t1,transpose(F_vv))
+         tmp_t1 = tmp_t1 - matmul(transpose(F_oo),t1)
+
          !$omp parallel default(none) &
-         !$omp private(i, j, a, b, m, n, e, f) &
          !$omp shared(sys, cc_amp, int_store, cc_int)
 
          ! Implied barrier here, better than master which doesn't have implied barrier
          ! tmp_t1 can be shared as each loop iteration will update a unique element of it.
-         !$omp single
-         tmp_t1 = 0.0_dp
-         !$omp end single
-         !$omp do schedule(runtime) collapse(2)
+         
+         !$omp do schedule(static, 10) collapse(2)
          do a = 2*nocc+1, 2*nbasis
             do i = 1, 2*nocc
                do m = 1, 2*nocc
-                  tmp_t1(i,a) = tmp_t1(i,a) - t1(m,a)*F_oo(m,i)
                   do e = 2*nocc+1, 2*nbasis
                      tmp_t1(i,a) = tmp_t1(i,a) + t2(m,i,e,a)*F_ov(m,e)
                      do f = 2*nocc+1, 2*nbasis
@@ -834,7 +841,6 @@ module ccsd
                   end do
                end do
                do e = 2*nocc+1, 2*nbasis
-                  tmp_t1(i,a) = tmp_t1(i,a) + t1(i,e)*F_vv(a,e)
                   do n = 1, 2*nocc
                      tmp_t1(i,a) = tmp_t1(i,a) - t1(n,e)*asym(n,a,i,e)
                   end do
@@ -842,29 +848,25 @@ module ccsd
             end do
          end do
          !$omp end do
+         !$omp end parallel
 
-         !$omp single
          tmp_t1 = tmp_t1/D_ia
          
          ! Update T2
-         tmp_t2 = 0.0_dp
-         !$omp end single
 
-         !$omp do schedule(runtime) collapse(4)
+         !$omp parallel default(none) &
+         !$omp shared(sys, cc_amp, int_store, cc_int)
+         !$omp do schedule(static, 10) collapse(4)
          do b = 2*nocc+1, 2*nbasis
             do a = 2*nocc+1, 2*nbasis
                do j = 1, 2*nocc
                   do i = 1, 2*nocc
                      tmp_t2(i,j,a,b) = asym(i,j,a,b)
                      do e = 2*nocc+1, 2*nbasis
-                        tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) + t2(j,i,e,a)*F_vv(b,e) - t2(j,i,e,b)*F_vv(a,e) &
+                        tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) - t2(j,i,e,b)*F_vv(a,e) &
                         + tmp_t1(i,e)*asym(e,j,a,b) - tmp_t1(j,e)*asym(e,i,a,b)
                         do m = 1, 2*nocc
-                           tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) - 0.5*F_ov(m,e)*(t2(i,j,a,e)*tmp_t1(m,b)-&
-                              t2(i,j,b,e)*tmp_t1(m,a))
-                        end do
-                        do f = 2*nocc+1, 2*nbasis
-                           tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) + 0.5*tau(j,i,f,e)*W_vvvv(a,b,e,f)
+                           tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) + 0.5*F_ov(m,e)*t2(i,j,b,e)*tmp_t1(m,a)
                         end do
                      end do
                      do m = 1, 2*nocc
@@ -873,9 +875,6 @@ module ccsd
                         do e = 2*nocc+1, 2*nbasis
                            tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) - 0.5*F_ov(m,e)*(t2(i,m,a,b)*tmp_t1(j,e)-&
                               t2(j,m,a,b)*tmp_t1(i,e))
-                        end do
-                        do n = 1, 2*nocc
-                           tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) + 0.5*tau(n,m,b,a)*W_oooo(m,n,i,j)
                         end do
                      end do
 
@@ -894,6 +893,18 @@ module ccsd
          end do
          !$omp end do
          !$omp end parallel
+
+         allocate(tmp_t2_s, source=t2)
+
+         ! t_ij^ae F_be
+         call dgemm_wrapper('N','T',8*nocc**2*nvirt,2*nvirt,2*nvirt,t2,(F_vv-matmul(transpose(t1),F_ov)/2),tmp_t2_s)
+         tmp_t2 = tmp_t2 + tmp_t2_s
+         call dgemm_wrapper('N','N',4*nocc**2,4*nvirt**2,4*nocc**2,W_oooo,tau,tmp_t2_s)
+         tmp_t2 = tmp_t2 + tmp_t2_s/2
+         call dgemm_wrapper('N','N',4*nocc**2,4*nvirt**2,4*nvirt**2,tau,W_vvvv,tmp_t2_s)
+         tmp_t2 = tmp_t2 + tmp_t2_s/2
+         deallocate(tmp_t2_s)
+
          t1 = tmp_t1
          t2 = tmp_t2/D_ijab
          end associate
@@ -931,7 +942,7 @@ module ccsd
             !$omp shared(sys,st,int_store,cc_amp,ecc,rmst2) 
             ecc = 0.0_p
             rmst2 = 0.0_p
-            !$omp do schedule(runtime) collapse(4) reduction(+:ecc,rmst2)
+            !$omp do schedule(static, 10) collapse(4) reduction(+:ecc,rmst2)
             do b = 2*nocc+1, 2*nbasis
                do a = 2*nocc+1, 2*nbasis
                   do j = 1, 2*nocc
@@ -996,7 +1007,7 @@ module ccsd
          ! We could of course only compute one element in a loop iteration but that will probably result in bad floating point
          ! performance, here for each thread/loop iteration we use the Fortran intrinsic sum, 
          ! instead of all relying on OMP reduction, to hopefully give better floating point performance.
-         !$omp do schedule(runtime) collapse(3) reduction(+:e_T)
+         !$omp do schedule(static, 10) collapse(3) reduction(+:e_T)
          do i = 1, 2*nocc
             do j = 1, 2*nocc
                do k = 1, 2*nocc
@@ -1085,7 +1096,7 @@ module ccsd
          ! We could of course only compute one element in a loop iteration but that will probably result in bad floating point
          ! performance, here for each thread/loop iteration we use the Fortran intrinsic sum, 
          ! instead of all relying on OMP reduction, to hopefully give better floating point performance.
-         !$omp do schedule(runtime) collapse(3) reduction(+:e_T)
+         !$omp do schedule(static, 10) collapse(3) reduction(+:e_T)
          do i = 1, 2*nocc
             do j = 1, 2*nocc
                do k = 1, 2*nocc
