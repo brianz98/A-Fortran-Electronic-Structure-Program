@@ -62,9 +62,22 @@ module linalg
          integer, intent(in) :: outer_row, outer_col, inner_dim
          real(p), intent(in) :: A(*), B(*)
          real(p), intent(inout) :: C(*)
+         integer :: LDA, LDB
 
+         if (transA == 'T') then
+            LDA = inner_dim
+         else
+            LDA = outer_row
+         end if
+
+         if (transB == 'T') then
+            LDB = outer_col
+         else
+            LDB = inner_dim
+         end if
+         
          call dgemm(transA, transB, outer_row, outer_col, inner_dim, 1.0_dp, &
-                    A, outer_row, B, inner_dim, 0.0_dp, C, outer_row)
+                    A, LDA, B, LDB, 0.0_dp, C, outer_row)
       end subroutine dgemm_wrapper
 
       elemental subroutine zero_mat(matel)

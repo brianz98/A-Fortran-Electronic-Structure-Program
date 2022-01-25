@@ -745,50 +745,50 @@ module ccsd
          
          ! Instead of laying it out like (m,n,i,j) we use (i,j,m,n) because then the contraction tau_mn^ab W_mnij can be processed
          ! by a simple dgemm call
-         allocate(scratch, mold=W_oooo)
+         allocate(scratch,reshape_scratch, mold=W_oooo)
 
          ! Eq. 6: W_mnij = <mn||ij> + P_(ij) \sum_e t_j^e <mn||ie> + 1/2\sum_{ef} tau_ij^ef <mn||ef>
          ! This performs the identity in the perm. operator
-         print*,'dgemm'
-         call dgemm_wrapper('N','T',nocc**3,nocc,nocc,cc_int%ooov,t1,scratch)
+         call dgemm_wrapper('N','T',nocc**3,nocc,nvirt,cc_int%ooov,t1,scratch)
          ! This adds <mn||ij> to W_mnij
          W_oooo = cc_int%oooo + scratch
          ! This performs the i<->j swap in the perm. operator
-!         reshape_scratch = reshape(scratch, (/nocc,nocc,nocc,nocc/), order=(/1,2,4,3/))
-!         W_oooo = W_oooo - reshape_scratch
-         W_oooo = W_oooo - reshape(scratch, (/nocc,nocc,nocc,nocc/), order=(/1,2,4,3/))
+         reshape_scratch = reshape(scratch, shape(reshape_scratch), order=(/1,2,4,3/))
+         W_oooo = W_oooo - reshape_scratch
+!         W_oooo = W_oooo - reshape(scratch, (/nocc,nocc,nocc,nocc/), order=(/1,2,4,3/))
          ! This performs the last contraction
 !         reshape_scratch = reshape(tau, (/nvirt,nvirt,nocc,nocc/), order=(/3,4,1,2/))
-         print*,'dgemm'
-         call dgemm_wrapper('N','N',nocc**2,nocc**2,nvirt**2,cc_int%oovv,&
-                           reshape(tau, (/nvirt,nvirt,nocc,nocc/), order=(/3,4,1,2/)),scratch)
+         deallocate(reshape_scratch)
+         allocate(reshape_scratch(nvirt,nvirt,nocc,nocc))
+         reshape_scratch = reshape(tau, shape(reshape_scratch), order=(/3,4,1,2/))
+         call dgemm_wrapper('N','N',nocc**2,nocc**2,nvirt**2,cc_int%oovv,reshape_scratch,scratch)
          W_oooo = W_oooo + scratch/2
-!         reshape_scratch = reshape(W_oooo, (/nocc,nocc,nocc,nocc/), order=(/3,4,1,2/))
-         W_oooo = reshape(W_oooo, (/nocc,nocc,nocc,nocc/), order=(/3,4,1,2/))
+         deallocate(reshape_scratch)
+         allocate(reshape_scratch, mold=W_oooo)
+         reshape_scratch = reshape(W_oooo, shape(reshape_scratch), order=(/3,4,1,2/))
+!         W_oooo = reshape(W_oooo, (/nocc,nocc,nocc,nocc/), order=(/3,4,1,2/))
+         W_oooo = reshape_scratch
 
-         deallocate(scratch)
-         allocate(scratch, mold=W_vvvv)
+         deallocate(scratch,reshape_scratch)
+         allocate(scratch,reshape_scratch, mold=W_vvvv)
 
          ! - P_(ab) t_m^b <am||ef> = + P_(ab) (t_b^m)^T <ma||ef>, plus another sign change, which is most easily explained 
          ! if we look at it by element: t_b^m <ma||ef> = \sum_m t_b^m <ma||ef> = -\sum_m t_b^m <am||ef>
-         print*,'dgemm'
-         call dgemm_wrapper('T','N',nocc,nvirt**3,nocc,t1,cc_int%ovvv,scratch)
+         call dgemm_wrapper('T','N',nvirt,nvirt**3,nocc,t1,cc_int%ovvv,scratch)
          W_vvvv = cc_int%vvvv - scratch
-!         reshape_scratch = reshape(scratch,(/nvirt,nvirt,nvirt,nvirt/),order=(/2,1,3,4/))
-!         W_vvvv = W_vvvv + reshape_scratch
-         W_vvvv = W_vvvv + reshape(scratch,(/nvirt,nvirt,nvirt,nvirt/),order=(/2,1,3,4/))
-!         reshape_scratch = reshape(W_vvvv,(/nvirt,nvirt,nvirt,nvirt/),order=(/3,4,1,2/))
-!         W_vvvv = reshape_scratch
-         W_vvvv = reshape(W_vvvv,(/nvirt,nvirt,nvirt,nvirt/),order=(/3,4,1,2/))
+         reshape_scratch = reshape(scratch,shape(reshape_scratch),order=(/2,1,3,4/))
+         W_vvvv = W_vvvv + reshape_scratch
+!         W_vvvv = W_vvvv + reshape(scratch,(/nvirt,nvirt,nvirt,nvirt/),order=(/2,1,3,4/))
+         reshape_scratch = reshape(W_vvvv,shape(reshape_scratch),order=(/3,4,1,2/))
+         W_vvvv = reshape_scratch
+!         W_vvvv = reshape(W_vvvv,(/nvirt,nvirt,nvirt,nvirt/),order=(/3,4,1,2/))
 
-         deallocate(scratch)
+         deallocate(scratch,reshape_scratch)
          allocate(scratch, mold=W_ovvo)
 
-         print*,'dgemm'
-         call dgemm_wrapper('N','T',nocc*nvirt**2,nocc,nocc,cc_int%ovvo,t1,scratch)
+         call dgemm_wrapper('N','T',nocc*nvirt**2,nocc,nvirt,cc_int%ovvo,t1,scratch)
          W_ovvo = cc_int%ovvo + scratch
-         print*,'dgemm'
-         call dgemm_wrapper('T','N',nocc,nocc**2*nvirt,nocc,t1,cc_int%oovo,scratch)
+         call dgemm_wrapper('T','N',nvirt,nocc**2*nvirt,nocc,t1,cc_int%oovo,scratch)
          W_ovvo = W_ovvo - scratch
 
          !$omp parallel default(none) &
@@ -923,13 +923,10 @@ module ccsd
          allocate(tmp_t2_s, source=t2)
 
          ! t_ij^ae F_be
-         print*,'dgemm'
-         call dgemm_wrapper('N','T',nocc**2*nvirt,nvirt,nvirt,t2,(F_vv-matmul(transpose(t1),F_ov)/2),tmp_t2_s)
+         call dgemm_wrapper('N','T',nocc**2*nvirt,nvirt,nocc,t2,(F_vv-matmul(transpose(t1),F_ov)/2),tmp_t2_s)
          tmp_t2 = tmp_t2 + tmp_t2_s
-         print*,'dgemm'
          call dgemm_wrapper('N','N',nocc**2,nvirt**2,nocc**2,W_oooo,tau,tmp_t2_s)
          tmp_t2 = tmp_t2 + tmp_t2_s/2
-         print*,'dgemm'
          call dgemm_wrapper('N','N',nocc**2,nvirt**2,nvirt**2,tau,W_vvvv,tmp_t2_s)
          tmp_t2 = tmp_t2 + tmp_t2_s/2
          deallocate(tmp_t2_s)
