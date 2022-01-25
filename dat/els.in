@@ -1,0 +1,7 @@
+&elsinput
+calc_type="CCSD(T)_spinorb",
+scf_e_tol=1e-7,
+scf_d_tol=1e-6,
+ccsd_e_tol=1e-7,
+ccsd_t_tol=1e-6
+/
