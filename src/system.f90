@@ -9,9 +9,9 @@ module system
 
    type system_t
       ! Basic system information
+      integer :: natoms = 0
       integer :: nel = 0
       integer :: nbasis = 0
-      integer :: natoms = 0
       integer :: nocc = 0
       integer :: nvirt = 0
       integer, allocatable :: charges(:)
@@ -39,6 +39,7 @@ module system
       real(p) :: ccsd_t_tol = 1e-6
 
       ! Level of theory (up to)
+      logical :: restricted
       integer :: calc_type
 
    end type system_t
@@ -85,20 +86,28 @@ module system
            select case(trim(calc_type))
                 case("RHF")
                     sys%calc_type = RHF
+                    sys%restricted = .true.
                 case("UHF")
                     sys%calc_type = UHF
+                    sys%restricted = .false.
                 case("MP2_spinorb")
                     sys%calc_type = MP2_spinorb
+                    sys%restricted = .false.
                 case("MP2_spatial")
                     sys%calc_type = MP2_spatial
+                    sys%restricted = .true.
                 case("CCSD_spinorb")
                     sys%calc_type = CCSD_spinorb
+                    sys%restricted = .false.
                 case("CCSD_spatial")
                     sys%calc_type = CCSD_spatial
+                    sys%restricted = .true.
                 case("CCSD(T)_spinorb")
                     sys%calc_type = CCSD_T_spinorb
+                    sys%restricted = .false.
                 case("CCSD(T)_spatial")
                     sys%calc_type = CCSD_T_spatial
+                    sys%restricted = .true.
                 case default
                     call error('system::read_system_in', 'Unrecognised calculation type!')
            end select

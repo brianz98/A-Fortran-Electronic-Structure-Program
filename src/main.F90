@@ -51,7 +51,8 @@ program main
         write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for restricted Hartree-Fock:', real(t1-t0)/count_rate, "s"
         t0=t1
 
-        call do_mp2_spinorb(sys, int_store)
+        ! Spinorbital MP2 is not currently implemented
+        call do_mp2_spatial(sys, int_store)
         call system_clock(t1)
         if (t1<t0) t1 = t1+count_max
         write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for UMP2:', real(t1-t0)/count_rate, "s"

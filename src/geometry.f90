@@ -36,11 +36,16 @@ module geometry
             close(ir)
 
             sys%nel = sum(sys%charges)
-            sys%nocc = sys%nel/2
-            sys%nvirt = sys%nbasis - sys%nocc
+            
+            if (sys%restricted) then
+                sys%nocc = sys%nel/2
+                sys%nvirt = sys%nbasis - sys%nocc
+            else
+                sys%nocc = sys%nel
+                sys%nvirt = (sys%nbasis - sys%nocc/2)*2
+            end if
 
             call get_e_nuc(sys, int_store%e_nuc)
-
 
         end subroutine read_geometry_in
 
