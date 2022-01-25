@@ -759,22 +759,28 @@ module ccsd
          ! by a simple dgemm call
          allocate(scratch, mold=W_oooo)
 
-         call dgemm('N','T',8*nocc**3,2*nocc,2*nvirt,cc_int%ooov,t1,scratch)
+         ! Eq. 6: W_mnij = <mn||ij> + P_(ij) \sum_e t_j^e <mn||ie> + 1/2\sum_{ef} tau_ij^ef <mn||ef>
+         ! This performs the identity in the perm. operator
+         call dgemm_wrapper('N','T',8*nocc**3,2*nocc,2*nvirt,cc_int%ooov,t1,scratch)
+         ! This adds <mn||ij> to W_mnij
          W_oooo = cc_int%oooo + scratch
-
+         ! This performs the i<->j swap in the perm. operator
          reshape_scratch = reshape(scratch, (/2*nocc,2*nocc,2*nocc,2*nocc/), order=(/1,2,4,3/))
          W_oooo = W_oooo - reshape_scratch
-
+         ! This performs the last contraction
          reshape_scratch = reshape(tau, (/2*nvirt,2*nvirt,2*nocc,2*nocc/), order=(/3,4,1,2/))
-         call dgemm('N','N',4*nocc**2,4**nocc**2,4*nvirt**2,cc_int%oovv,reshape_scratch,scratch)
+         print*, '1'
+         call dgemm_wrapper('N','N',4*nocc**2,4**nocc**2,4*nvirt**2,cc_int%oovv,reshape_scratch,scratch)
+         print*, '2'
          W_oooo = W_oooo + scratch/2
-
+         print*, '3'
          reshape_scratch = reshape(W_oooo, (/2*nocc,2*nocc,2*nocc,2*nocc/), order=(/3,4,1,2/))
          W_oooo = reshape_scratch
 
          deallocate(scratch)
          allocate(scratch, mold=W_vvvv)
 
+         
          ! - P_(ab) t_m^b <am||ef> = + P_(ab) (t_b^m)^T <ma||ef>, plus another sign change, which is most easily explained 
          ! if we look at it by element: t_b^m <ma||ef> = \sum_m t_b^m <ma||ef> = -\sum_m t_b^m <am||ef>
          call dgemm_wrapper('T','N',2*nvirt,8*nvirt**3,2*nocc,t1,cc_int%ovvv,scratch)
@@ -785,6 +791,7 @@ module ccsd
          deallocate(scratch)
          allocate(scratch, mold=W_ovvo)
 
+         print*, '2'
          call dgemm_wrapper('N','T',8*nocc*nvirt**2,2*nocc,2*nvirt,cc_int%ovvo,t1,scratch)
          W_ovvo = cc_int%ovvo + scratch
          call dgemm_wrapper('T','N',2*nvirt,8*nocc**2*nvirt,2*nocc,t1,cc_int%oovo,scratch)
