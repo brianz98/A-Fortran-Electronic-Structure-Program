@@ -583,11 +583,11 @@ module ccsd
             ! Construct the B matrix
             if (n <= nerr) then
                if (allocated(diis%B)) deallocate(diis%B, diis%c, diis%rhs)
-               allocate(diis%B(n+1,n+1), diis%c(n+1), diis%rhs(n+1), source=0.0_p)
+               allocate(diis%B(n,n), diis%c(n), diis%rhs(n), source=0.0_p)
             end if
-            diis%B(n+1,:) = -1.0_p
-            diis%B(n+1,n+1) = 0.0_p
-            diis%rhs(n+1) = -1.0_p
+            diis%B(n,:) = -1.0_p
+            diis%B(n,n) = 0.0_p
+            diis%rhs(n) = -1.0_p
             diis%c = diis%rhs
             do i = 1, n-1
                do j = 1, i
