@@ -5,6 +5,7 @@ module hf
 
    type diis_t
       ! Contains matrices for use in the DIIS procedure
+      logical :: use_diis = .true.
       integer :: n_errmat = 6
       integer :: n_active = 0
       integer :: iter = 0
@@ -180,10 +181,16 @@ module hf
          type(system_t), intent(in) :: sys
          type(diis_t), intent(out) :: diis
 
-         associate(n=>sys%nbasis)
-            allocate(diis%e(diis%n_errmat,n,n), source=0.0_p)
-            allocate(diis%F(diis%n_errmat,n,n), source=0.0_p)
-         end associate
+         diis%n_errmat = sys%scf_diis_n_errmat
+
+         if (diis%n_errmat <2 ) then
+            diis%use_diis = .false.
+         else
+            associate(n=>sys%nbasis)
+               allocate(diis%e(diis%n_errmat,n,n), source=0.0_p)
+               allocate(diis%F(diis%n_errmat,n,n), source=0.0_p)
+            end associate
+         end if
       end subroutine init_diis_t
 
       subroutine deallocate_diis_t(diis)
