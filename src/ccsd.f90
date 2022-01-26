@@ -600,9 +600,9 @@ module ccsd
             if (ierr /= 0) call error('ccsd::update_diis_cc', 'Linear solve failed!')
             cc_amp%t_ia = 0.0_p
             cc_amp%t_ijab = 0.0_p
-            do i = 1, n
-               cc_amp%t_ia = cc_amp%t_ia + diis%c(i) * diis%t1(:,:,i)
-               cc_amp%t_ijab = cc_amp%t_ijab + diis%c(i) * diis%t2(:,:,:,:,i)
+            do i = 1, n-1
+               cc_amp%t_ia = cc_amp%t_ia + diis%c(i) * diis%t1(:,:,idx(i,1))
+               cc_amp%t_ijab = cc_amp%t_ijab + diis%c(i) * diis%t2(:,:,:,:,idx(i,1))
             end do
          end if
          end associate
