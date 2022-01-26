@@ -35,7 +35,7 @@ module ccsd
 
       ! These are identical as the HF-SCF ones, other than that we store and use the T matrices, 
       ! instead of Fock matrices for error matrix computation. Also that we don't store the error matrices as that will 
-      ! double the memory usage what is a fast step (compared to updating amplitudes) anyway. Instead we use the idx lookup array
+      ! double the memory usage in what is a fast step (compared to updating amplitudes) anyway. Instead we use the idx lookup array
       ! to make sure we take the right differences in computing e_i matrices on the fly.
       !
       ! In more detail, as e_i = T_i+1 - T_i, and we overwrite T1 when T8 is the newest T matrix, we must make sure we never 
@@ -170,14 +170,14 @@ module ccsd
          allocate(cc_int%oooo, source=asym(1:nocc,1:nocc,1:nocc,1:nocc))
          ! 3 occupied, 1 virtual, of which there are 3 types: ovoo, oovo, ooov, which are all related by permutational sym
          allocate(cc_int%ooov, source=asym(1:nocc,1:nocc,1:nocc,nocc+1:2*nbasis))
-         cc_int%ovoo = reshape(cc_int%ooov, (/nocc,nvirt,nocc,nocc/), order=(/1,4,3,2/))
-         cc_int%oovo = -reshape(cc_int%ooov, (/nocc,nocc,nvirt,nocc/), order=(/1,2,4,3/))
+         allocate(cc_int%ovoo, source=asym(1:nocc,nocc+1:2*nbasis,1:nocc,1:nocc))
+         allocate(cc_int%oovo, source=asym(1:nocc,1:nocc,nocc+1:2*nbasis,1:nocc))
          ! 2o2v
          allocate(cc_int%oovv, source=asym(1:nocc,1:nocc,nocc+1:2*nbasis,nocc+1:2*nbasis))
-         cc_int%ovvo = -reshape(cc_int%oovv, (/nocc,nvirt,nvirt,nocc/), order=(/1,4,3,2/))
+         allocate(cc_int%ovvo, source=asym(1:nocc,nocc+1:2*nbasis,nocc+1:2*nbasis,1:nocc))
          ! 1o3v
          allocate(cc_int%ovvv, source=asym(1:nocc,nocc+1:2*nbasis,nocc+1:2*nbasis,nocc+1:2*nbasis))
-         cc_int%vovv = -reshape(cc_int%ovvv, (/nvirt,nocc,nvirt,nvirt/), order=(/2,1,3,4/))
+         allocate(cc_int%vovv, source=asym(nocc+1:2*nbasis,1:nocc,nocc+1:2*nbasis,nocc+1:2*nbasis))
          ! 4v
          allocate(cc_int%vvvv, source=asym(nocc+1:2*nbasis,nocc+1:2*nbasis,nocc+1:2*nbasis,nocc+1:2*nbasis))
 
@@ -187,7 +187,6 @@ module ccsd
          write(iunit, *)
          t0=t1
 
-         ! [todo]: do we keep the unsliced, unrestricted asymmetrised ERI array?
          deallocate(int_store%asym_spinorb)
          end associate
 
@@ -210,12 +209,12 @@ module ccsd
          ! ###################
          ! Iterative CC solver
          ! ###################
-         associate(nbasis=>sys%nbasis, nocc=>sys%nocc, t_ia=>cc_amp%t_ia, t_ijab=>cc_amp%t_ijab, asym=>int_store%asym_spinorb)
+         associate(nbasis=>sys%nbasis, nocc=>sys%nocc, t_ia=>cc_amp%t_ia, t_ijab=>cc_amp%t_ijab)
          do iter = 1, maxiter
             ! Update intermediate tensors
             call build_tau(sys, cc_amp, cc_int)
-            call build_F(sys, cc_int, cc_amp, asym)
-            call build_W(sys, cc_int, cc_amp, asym)
+            call build_F(sys, cc_int, cc_amp)
+            call build_W(sys, cc_int, cc_amp)
 
             ! CC amplitude equations
             call update_amplitudes(sys, cc_amp, int_store, cc_int)
@@ -375,8 +374,8 @@ module ccsd
          do iter = 1, maxiter
             ! Update intermediate tensors
             call build_tau(sys, cc_amp, cc_int)
-            call build_F(sys, cc_int, cc_amp, asym)
-            call build_W(sys, cc_int, cc_amp, asym)
+            call build_F(sys, cc_int, cc_amp)
+            call build_W(sys, cc_int, cc_amp)
 
             ! CC amplitude equations
             call update_amplitudes(sys, cc_amp, int_store, cc_int)
@@ -520,9 +519,9 @@ module ccsd
          allocate(diis%idx(diis%n_errmat,2), source=0)
 
          associate(nvirt=>sys%nvirt, nocc=>sys%nocc)
-            allocate(diis%t1(diis%n_errmat,nocc,nvirt), source=0.0_p, stat=ierr)
+            allocate(diis%t1(nocc,nvirt,diis%n_errmat), source=0.0_p, stat=ierr)
             call check_allocate('diis%t1', diis%n_errmat*nocc*nvirt, ierr)
-            allocate(diis%t2(diis%n_errmat,nocc,nocc,nvirt,nvirt), source=0.0_p, stat=ierr)
+            allocate(diis%t2(nocc,nocc,nvirt,nvirt,diis%n_errmat), source=0.0_p, stat=ierr)
             call check_allocate('diis%t1', diis%n_errmat*(nocc*nvirt)**2, ierr)
          end associate
       end subroutine init_diis_cc_t
@@ -541,13 +540,16 @@ module ccsd
 
          integer :: i, j, ierr
 
+         ! Increment counter
          diis%iter = diis%iter+1
+         ! A modulo behaviour, but makes sure we never get iter = 0
          if (diis%iter > diis%n_errmat) diis%iter = diis%iter - diis%n_errmat
+         ! In the first few iterations we need to make sure we don't accidentally access the empty arrays
          if (diis%n_active < diis%n_errmat) diis%n_active = diis%n_active+1
-         diis%t1(diis%iter,:,:) = 0.0_p
-         diis%t2(diis%iter,:,:,:,:) = 0.0_p
-         diis%t1(diis%iter,:,:) = cc_amp%t_ia
-         diis%t2(diis%iter,:,:,:,:) = cc_amp%t_ijab
+
+         ! Store the current amplitudes
+         diis%t1(:,:,diis%iter) = cc_amp%t_ia
+         diis%t2(:,:,:,:,diis%iter) = cc_amp%t_ijab
 
          associate(n=>diis%n_active, nerr=>diis%n_errmat, it=>diis%iter, idx=>diis%idx)
          if (n > 2) then
@@ -560,7 +562,8 @@ module ccsd
             ! So our idx array should look like
             ! 4 3 2 1 8 7 6
             ! 3 2 1 8 7 6 5
-            ! (note that the code below gives something like this but with the columns swapped around but that's ok)
+            ! (note that the code below gives something like this but with the columns swapped around but that's ok 
+            ! since we don't care about chronological ordering)
             do i = 1, n-1
                idx(i,1) = mod(it+i+1, n)+1
                idx(i,2) = mod(it+i, n)+1
@@ -578,8 +581,8 @@ module ccsd
                do j = 1, i
                   ! We compute the error matrices on the fly
                   ! [TODO] - shift iter index to the end to give better cache behaviour
-                  diis%B(i,j) = sum((diis%t1(idx(i,1),:,:)-diis%t1(idx(i,2),:,:))*(diis%t1(idx(j,1),:,:)-diis%t1(idx(j,2),:,:))) &
-                  + sum((diis%t2(idx(i,1),:,:,:,:)-diis%t2(idx(i,2),:,:,:,:))*(diis%t2(idx(j,1),:,:,:,:)-diis%t2(idx(j,2),:,:,:,:)))
+                  diis%B(i,j) = sum((diis%t1(:,:,idx(i,1))-diis%t1(:,:,idx(i,2)))*(diis%t1(:,:,idx(j,1))-diis%t1(:,:,idx(j,2)))) &
+                  + sum((diis%t2(:,:,:,:,idx(i,1))-diis%t2(:,:,:,:,idx(i,2)))*(diis%t2(:,:,:,:,idx(j,1))-diis%t2(:,:,:,:,idx(j,2))))
                end do
             end do
             call linsolve(diis%B, diis%c, ierr)
@@ -587,8 +590,8 @@ module ccsd
             cc_amp%t_ia = 0.0_p
             cc_amp%t_ijab = 0.0_p
             do i = 1, n
-               cc_amp%t_ia = cc_amp%t_ia + diis%c(i) * diis%t1(i,:,:)
-               cc_amp%t_ijab = cc_amp%t_ijab + diis%c(i) * diis%t2(i,:,:,:,:)
+               cc_amp%t_ia = cc_amp%t_ia + diis%c(i) * diis%t1(:,:,i)
+               cc_amp%t_ijab = cc_amp%t_ijab + diis%c(i) * diis%t2(:,:,:,:,i)
             end do
          end if
          end associate
@@ -644,19 +647,17 @@ module ccsd
 
       end subroutine build_tau
 
-      subroutine build_F(sys, cc_int, cc_amp, asym)
+      subroutine build_F(sys, cc_int, cc_amp)
          ! Build the two-index F intermediates,
          ! Eqs. 3-5, note as we use HF reference all terms involving the fock matrix vanishes.
          ! In:
          !     sys: System under study.
          !     cc_amp: CC amplitudes
-         !     asym: the antisymmetrised two-electron integrals <pq||rs>
          ! In/out:
          !     cc_int: CC intermediates with the F matrices updated.
 
          type(system_t), intent(in) :: sys
          type(cc_amp_t), intent(in) :: cc_amp
-         real(p), intent(in) :: asym(:,:,:,:)
          type(cc_int_t), intent(inout) :: cc_int
          
          integer :: a, e, f, m, n, i
@@ -670,7 +671,7 @@ module ccsd
 
          !$omp parallel default(none) &
          !$omp private(a, e, f, m, n, i) &
-         !$omp shared(sys, cc_int, cc_amp, asym)
+         !$omp shared(sys, cc_int, cc_amp)
 
          ! F_ae = \sum_{mf} t_m^f * <ma||fe> - 0.5 \sum_{mnf} \tau~_{mn}^{af} <mn||ef>
          !$omp do schedule(static, 10) collapse(2)
@@ -696,7 +697,7 @@ module ccsd
                   do n = 1, nocc
                      F_oo(m,i) = F_oo(m,i) - t_ia(n,e)*cc_int%ooov(n,m,i,e)
                      ! [todo] - This is terrible cache-wise, but does it warrant creating a new slice/doing a reshape?
-                     F_oo(m,i) = F_oo(m,i) - 0.5*dot_product(tau_tilde(n,i,:,e),cc_int%oovv(m,n,e,:))
+                     F_oo(m,i) = F_oo(m,i) + 0.5*dot_product(tau_tilde(n,i,:,e),cc_int%oovv(m,n,e,:))
                   end do
                end do
             end do
@@ -705,8 +706,8 @@ module ccsd
 
          ! F_me = \sum_{nf} t_n^f * <mn||ef>
          !$omp do schedule(static, 10) collapse(2)
-         do m = 1, nocc
-            do e = 1, nvirt
+         do e = 1, nvirt
+            do m = 1, nocc
                ! [todo] - same as above, also investigate if sum(A*B) is better in cases of missed cache
                F_ov(m,e) = F_ov(m,e) + sum(t_ia(:,:)*cc_int%oovv(m,:,e,:))
             end do
@@ -716,7 +717,7 @@ module ccsd
          end associate
       end subroutine build_F
 
-      subroutine build_W(sys, cc_int, cc_amp, asym)
+      subroutine build_W(sys, cc_int, cc_amp)
          ! Build the four-index W intermediates, Eqs. 6 and 8.
          ! Note that we use a factor of 0.5 in the innermost line of the W_oooo loop instead of 0.25 per main text of Stanton,
          ! this is to make allowance for when W_vvvv cannot be stored due to memory limitation and has to be computed on the fly.
@@ -724,7 +725,6 @@ module ccsd
          ! In:
          !     sys: System under study.
          !     cc_amp: CC amplitudes
-         !     asym: the antisymmetrised two-electron integrals <pq||rs>
          ! In/out:
          !     cc_int: CC intermediates with the F matrices updated.
 
@@ -732,7 +732,6 @@ module ccsd
 
          type(system_t), intent(in) :: sys
          type(cc_amp_t), intent(in) :: cc_amp
-         real(p), intent(in) :: asym(:,:,:,:)
          type(cc_int_t), intent(inout) :: cc_int
          integer :: m, n, i, j, e, f, b, a
          real(p) :: x
@@ -740,60 +739,65 @@ module ccsd
 
          associate(nbasis=>sys%nbasis, nocc=>sys%nocc, nvirt=>sys%nvirt, t1=>cc_amp%t_ia, t2=>cc_amp%t_ijab,&
             W_oooo=>cc_int%W_oooo, W_ovvo=>cc_int%W_ovvo, tau=>cc_int%tau, W_vvvv=>cc_int%W_vvvv)
-         W_oooo = 0.0_p
-         W_ovvo = 0.0_p
          
          ! Instead of laying it out like (m,n,i,j) we use (i,j,m,n) because then the contraction tau_mn^ab W_mnij can be processed
          ! by a simple dgemm call
          allocate(scratch,reshape_scratch, mold=W_oooo)
 
-         ! Eq. 6: W_mnij = <mn||ij> + P_(ij) \sum_e t_j^e <mn||ie> + 1/2\sum_{ef} tau_ij^ef <mn||ef>
+         ! ########################################################################################################################
+         ! Eq. (6): W_mnij = <mn||ij> + P_(ij) t_j^e <mn||ie> + 1/2 tau_ij^ef <mn||ef>
+         ! ########################################################################################################################
          ! This performs the identity in the perm. operator
          call dgemm_wrapper('N','T',nocc**3,nocc,nvirt,cc_int%ooov,t1,scratch)
-         ! This adds <mn||ij> to W_mnij
          W_oooo = cc_int%oooo + scratch
          ! This performs the i<->j swap in the perm. operator
          reshape_scratch = reshape(scratch, shape(reshape_scratch), order=(/1,2,4,3/))
          W_oooo = W_oooo - reshape_scratch
-!         W_oooo = W_oooo - reshape(scratch, (/nocc,nocc,nocc,nocc/), order=(/1,2,4,3/))
-         ! This performs the last contraction
-!         reshape_scratch = reshape(tau, (/nvirt,nvirt,nocc,nocc/), order=(/3,4,1,2/))
          deallocate(reshape_scratch)
          allocate(reshape_scratch(nvirt,nvirt,nocc,nocc))
+         ! 1/2 tau_ijef <mn||ef>
          reshape_scratch = reshape(tau, shape(reshape_scratch), order=(/3,4,1,2/))
          call dgemm_wrapper('N','N',nocc**2,nocc**2,nvirt**2,cc_int%oovv,reshape_scratch,scratch)
          W_oooo = W_oooo + scratch/2
          deallocate(reshape_scratch)
          allocate(reshape_scratch, mold=W_oooo)
          reshape_scratch = reshape(W_oooo, shape(reshape_scratch), order=(/3,4,1,2/))
-!         W_oooo = reshape(W_oooo, (/nocc,nocc,nocc,nocc/), order=(/3,4,1,2/))
+         ! We reshape it to W_ijmn to make contractions more amenable to dgemm
          W_oooo = reshape_scratch
 
          deallocate(scratch,reshape_scratch)
          allocate(scratch,reshape_scratch, mold=W_vvvv)
 
-         ! - P_(ab) t_m^b <am||ef> = + P_(ab) (t_b^m)^T <ma||ef>, plus another sign change, which is most easily explained 
-         ! if we look at it by element: t_b^m <ma||ef> = \sum_m t_b^m <ma||ef> = -\sum_m t_b^m <am||ef>
+         ! ########################################################################################################################
+         ! Eq. (7): W_abef = <ab||ef> - P_(ab)(t_mb<am||ef>)
+         ! ########################################################################################################################
+         ! - P_(ab) t_m^b <am||ef> = + P_(ab) (t_b^m)^T <ma||ef>
          call dgemm_wrapper('T','N',nvirt,nvirt**3,nocc,t1,cc_int%ovvv,scratch)
-         W_vvvv = cc_int%vvvv - scratch
+         W_vvvv = cc_int%vvvv + scratch
          reshape_scratch = reshape(scratch,shape(reshape_scratch),order=(/2,1,3,4/))
-         W_vvvv = W_vvvv + reshape_scratch
-!         W_vvvv = W_vvvv + reshape(scratch,(/nvirt,nvirt,nvirt,nvirt/),order=(/2,1,3,4/))
+         W_vvvv = W_vvvv - reshape_scratch
          reshape_scratch = reshape(W_vvvv,shape(reshape_scratch),order=(/3,4,1,2/))
+         ! We reshape it to W_efab to make contractions more amenable to dgemm
          W_vvvv = reshape_scratch
-!         W_vvvv = reshape(W_vvvv,(/nvirt,nvirt,nvirt,nvirt/),order=(/3,4,1,2/))
 
          deallocate(scratch,reshape_scratch)
          allocate(scratch, mold=W_ovvo)
 
-         call dgemm_wrapper('N','T',nocc*nvirt**2,nocc,nvirt,cc_int%ovvo,t1,scratch)
+         ! ########################################################################################################################
+         ! Eq. (8): W_mbej = <mb||ej> + t_jf<mb||ef> - t_nb<mn||ej> - (1/2 t_jnfb + t_jf t_nb)<mn||ef>
+         ! ########################################################################################################################
+         ! <mb||ej> + t_jf<mb||ef>
+         call dgemm_wrapper('N','T',nocc*nvirt**2,nocc,nvirt,cc_int%ovvv,t1,scratch)
          W_ovvo = cc_int%ovvo + scratch
+         ! - t_nb<mn||ej> = +(t_bn)^T<nm||ej>
          call dgemm_wrapper('T','N',nvirt,nocc**2*nvirt,nocc,t1,cc_int%oovo,scratch)
-         W_ovvo = W_ovvo - scratch
+         W_ovvo = W_ovvo + scratch
+
+         deallocate(scratch)
 
          !$omp parallel default(none) &
          !$omp private(x) &
-         !$omp shared(cc_amp,asym,cc_int)
+         !$omp shared(cc_amp,cc_int)
          !$omp do schedule(static, 10) collapse(4)
          do j = 1, nocc
             do e = 1, nvirt
@@ -833,7 +837,7 @@ module ccsd
          type(cc_amp_t), intent(inout) :: cc_amp
          type(cc_int_t), intent(inout) :: cc_int
 
-         real(p), allocatable :: tmp_t2_s(:,:,:,:)
+         real(p), dimension(:,:,:,:), allocatable :: tmp_t2_s, reshape_tmp
 
          integer :: i, j, a, b, m, n, e, f
 
@@ -842,9 +846,14 @@ module ccsd
             W_ovvo=>cc_int%W_ovvo,tau=>cc_int%tau,tau_tilde=>cc_int%tau_tilde,nocc=>sys%nocc,nvirt=>sys%nvirt,&
             W_vvvv=>cc_int%W_vvvv)
 
+         ! ########################################################################################################################
          ! Update T1
+         ! Eq. (1) D_ia t_i^a = t_ie F_ae - t_ma F_mi + t_imae F_me - t_nf <na||if> -1/2 t_imef <ma||ef> - 1/2 t_mnae <nm||ei>
+         ! ########################################################################################################################
 
+         ! #### t_ie F_ae
          tmp_t1 = matmul(t1,transpose(F_vv))
+         ! #### -t_ma F_mi
          tmp_t1 = tmp_t1 - matmul(transpose(F_oo),t1)
 
          !$omp parallel default(none) &
@@ -858,17 +867,21 @@ module ccsd
             do i = 1, nocc
                do m = 1, nocc
                   do e = 1, nvirt
+                     ! #### t_imae F_me
                      tmp_t1(i,a) = tmp_t1(i,a) + t2(m,i,e,a)*F_ov(m,e)
                      do f = 1, nvirt
+                        ! #### -1/2 t_imef <ma||ef>
                         tmp_t1(i,a) = tmp_t1(i,a) - 0.5*t2(m,i,f,e)*cc_int%ovvv(m,a,e,f)
                      end do
                      do n = 1, nocc
+                        ! #### -1/2 t_mnae <nm||ei>
                         tmp_t1(i,a) = tmp_t1(i,a) - 0.5*t2(n,m,e,a)*cc_int%oovo(n,m,e,i)
                      end do
                   end do
                end do
                do e = 1, nvirt
                   do n = 1, nocc
+                     ! #### -t_nf <na||if>
                      tmp_t1(i,a) = tmp_t1(i,a) - t1(n,e)*cc_int%oovv(n,i,a,e)
                   end do
                end do
@@ -879,7 +892,13 @@ module ccsd
 
          tmp_t1 = tmp_t1/D_ia
          
+         ! ########################################################################################################################
          ! Update T2
+         ! Eq. (2) D_ijab t_ijab = <ij||ab> + P_ab(t_ijae (F_be - 1/2 t_mb F_me)) - P_(ij)(t_imab (F_mj + 1/2 t_je F_me)) 
+         !                         + 1/2 tau_mnab W_mnij + 1/2 tau_ijef W_abef + P_(ij)P_(ab)(t_imae W_mbej - t_ie t_ma <mb||ej>) 
+         !                         + P_(ij)(t_ie<ab||ej>) - P_(ab)(t_ma <mb||ij>)
+         ! ########################################################################################################################
+         ! <ij||ab>
          tmp_t2 = cc_int%oovv
          !$omp parallel default(none) &
          !$omp shared(sys, cc_amp, int_store, cc_int)
@@ -888,29 +907,26 @@ module ccsd
             do a = 1, nvirt
                do j = 1, nocc
                   do i = 1, nocc
-                     do e = 1, nvirt
-                        tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) - t2(j,i,e,b)*F_vv(a,e) &
-                        + tmp_t1(i,e)*cc_int%vovv(e,j,a,b) - tmp_t1(j,e)*cc_int%vovv(e,i,a,b)
-                        do m = 1, nocc
-                           tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) + 0.5*F_ov(m,e)*t2(i,j,b,e)*tmp_t1(m,a)
-                        end do
-                     end do
                      do m = 1, nocc
-                        tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) - t2(m,i,b,a)*F_oo(m,j) + t2(m,j,b,a)*F_oo(m,i) &
-                        - tmp_t1(m,a)*cc_int%ovoo(m,b,i,j) + tmp_t1(m,b)*cc_int%ovoo(m,a,i,j)
+                        ! [todo]: this can be cast into dgemm form
+                        ! -P_(ij)(t_imab F_mj)
+                        tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) - t2(m,i,b,a)*F_oo(m,j) + t2(m,j,b,a)*F_oo(m,i)
                         do e = 1, nvirt
-                           tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) - 0.5*F_ov(m,e)*(t2(i,m,a,b)*tmp_t1(j,e)-&
-                              t2(j,m,a,b)*tmp_t1(i,e))
+                           ! -1/2 P_(ij)(t_je F_me t_imab)
+                           tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) - 0.5*F_ov(m,e)*(t2(i,m,a,b)*t1(j,e)-&
+                              t2(j,m,a,b)*t1(i,e))
                         end do
                      end do
 
                      do m = 1, nocc
                         do e = 1, nvirt
+                           ! P_(ij)P_(ab)(t_imae W_mbej - t_ie t_ma <mb||ej>)
+                           ! [todo]: Maybe one of the permutations is good for dgemm, then the rest can be reshaped?
                            tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) &
-                           + t2(m,i,e,a)*W_ovvo(m,b,e,j) - tmp_t1(i,e)*tmp_t1(m,a)*cc_int%oovv(m,j,e,b)&
-                           - t2(m,j,e,a)*W_ovvo(m,b,e,i) + tmp_t1(j,e)*tmp_t1(m,a)*cc_int%oovv(m,i,e,b)&
-                           - t2(m,i,e,b)*W_ovvo(m,a,e,j) + tmp_t1(i,e)*tmp_t1(m,b)*cc_int%oovv(m,j,e,a)&
-                           + t2(m,j,e,b)*W_ovvo(m,a,e,i) - tmp_t1(j,e)*tmp_t1(m,b)*cc_int%oovv(m,i,e,a)
+                           + t2(m,i,e,a)*W_ovvo(m,b,e,j) - t1(i,e)*t1(m,a)*cc_int%oovv(m,j,e,b)&
+                           - t2(m,j,e,a)*W_ovvo(m,b,e,i) + t1(j,e)*t1(m,a)*cc_int%oovv(m,i,e,b)&
+                           - t2(m,i,e,b)*W_ovvo(m,a,e,j) + t1(i,e)*t1(m,b)*cc_int%oovv(m,j,e,a)&
+                           + t2(m,j,e,b)*W_ovvo(m,a,e,i) - t1(j,e)*t1(m,b)*cc_int%oovv(m,i,e,a)
                         end do 
                      end do
                   end do
@@ -920,13 +936,24 @@ module ccsd
          !$omp end do
          !$omp end parallel
 
-         allocate(tmp_t2_s, source=t2)
+         allocate(tmp_t2_s, reshape_tmp, source=t2)
 
-         ! t_ij^ae F_be
-         call dgemm_wrapper('N','T',nocc**2*nvirt,nvirt,nocc,t2,(F_vv-matmul(transpose(t1),F_ov)/2),tmp_t2_s)
-         tmp_t2 = tmp_t2 + tmp_t2_s
+         ! P_(ab)(t_ijae (F_be - 1/2 t_mb F_me))
+         call dgemm_wrapper('N','T',nocc**2*nvirt,nvirt,nvirt,t2,(F_vv-matmul(transpose(t1),F_ov)/2),tmp_t2_s)
+         reshape_tmp = reshape(tmp_t2_s,shape(reshape_tmp),order=(/1,2,4,3/))
+         tmp_t2 = tmp_t2 + tmp_t2_s - reshape_tmp
+         ! P_(ij)(t_ie<ab||ej>) = P_(ij)(t_ie<ej||ab>)
+         call dgemm_wrapper('N','N',nocc,nocc*nvirt**2,nvirt,t1,cc_int%vovv,tmp_t2_s)
+         reshape_tmp = reshape(tmp_t2_s,shape(reshape_tmp),order=(/2,1,3,4/))
+         tmp_t2 = tmp_t2 + tmp_t2_s - reshape_tmp
+         ! -P_(ab)(t_ma <mb||ij>) = +P_(ab)(<ij||bm> t_ma)
+         call dgemm_wrapper('N','N',nocc**2*nvirt,nvirt,nocc,cc_int%oovo,t1,tmp_t2_s)
+         reshape_tmp = reshape(tmp_t2_s,shape(reshape_tmp),order=(/1,2,4,3/))
+         tmp_t2 = tmp_t2 + tmp_t2_s - reshape_tmp
+         ! + 1/2 tau_mnab W_mnij, but remember out W_mnij is reshaped as W_ijmn
          call dgemm_wrapper('N','N',nocc**2,nvirt**2,nocc**2,W_oooo,tau,tmp_t2_s)
          tmp_t2 = tmp_t2 + tmp_t2_s/2
+         ! + 1/2 tau_ijef W_abef
          call dgemm_wrapper('N','N',nocc**2,nvirt**2,nvirt**2,tau,W_vvvv,tmp_t2_s)
          tmp_t2 = tmp_t2 + tmp_t2_s/2
          deallocate(tmp_t2_s)
