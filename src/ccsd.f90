@@ -752,7 +752,7 @@ module ccsd
          associate(nbasis=>sys%nbasis, nocc=>sys%nocc, nvirt=>sys%nvirt, t1=>cc_amp%t_ia, t2=>cc_amp%t_ijab,&
             W_oooo=>cc_int%W_oooo, W_ovvo=>cc_int%W_ovvo, tau=>cc_int%tau, W_vvvv=>cc_int%W_vvvv)
 
-         if (.true.) then
+         if (.false.) then
          ! Instead of laying it out like (m,n,i,j) we use (i,j,m,n) because then the contraction tau_mn^ab W_mnij can be processed
          ! by a simple dgemm call
          allocate(scratch,reshape_scratch, mold=W_oooo)
@@ -828,58 +828,64 @@ module ccsd
          !$omp end parallel
          
          else
-         W_oooo = cc_int%oooo
-         W_ovvo = cc_int%ovvo
-         W_vvvv = cc_int%vvvv
+
+         allocate(scratch,reshape_scratch, mold=W_oooo)
+         ! ########################################################################################################################
+         ! Eq. (6): W_mnij = <mn||ij> + P_(ij) t_j^e <mn||ie> + 1/2 tau_ij^ef <mn||ef>
+         ! ########################################################################################################################
+         ! + P_(ij) t_j^e <mn||ie>
+         call dgemm_wrapper('N','T',nocc**3,nocc,nvirt,cc_int%ooov,t1,scratch)
+         reshape_scratch = reshape(scratch, shape(reshape_scratch), order=(/1,2,4,3/))
+         W_oooo = cc_int%oooo + scratch - reshape_scratch
+         deallocate(reshape_scratch)
+
+         ! 1/2 tau_ijef <mn||ef>
+         allocate(reshape_scratch(nvirt,nvirt,nocc,nocc))
+         reshape_scratch = reshape(tau, shape(reshape_scratch), order=(/3,4,1,2/))
+         call dgemm_wrapper('N','N',nocc**2,nocc**2,nvirt**2,cc_int%oovv,reshape_scratch,scratch)
+         W_oooo = W_oooo + scratch/2
+         deallocate(reshape_scratch)
+
+         ! We reshape it to W_ijmn to make contractions more amenable to dgemm
+         allocate(reshape_scratch, mold=W_oooo)
+         reshape_scratch = reshape(W_oooo, shape(reshape_scratch), order=(/3,4,1,2/))
+         W_oooo = reshape_scratch
+         deallocate(scratch,reshape_scratch)
+
+         ! ########################################################################################################################
+         ! Eq. (7): W_abef = <ab||ef> - P_(ab)(t_mb<am||ef>)
+         ! ########################################################################################################################
+         ! [todo]: explain the signs!!
+         allocate(scratch,reshape_scratch, mold=W_vvvv)
+         call dgemm_wrapper('T','N',nvirt,nvirt**3,nocc,t1,cc_int%ovvv,scratch)
+         reshape_scratch = reshape(scratch,shape(reshape_scratch),order=(/2,1,3,4/))
+         W_vvvv = cc_int%vvvv - scratch + reshape_scratch
+
+         ! We reshape it to W_efab to make contractions more amenable to dgemm
+         reshape_scratch = reshape(W_vvvv,shape(reshape_scratch),order=(/3,4,1,2/))
+         W_vvvv = reshape_scratch
+         deallocate(scratch,reshape_scratch)
+
+         ! ########################################################################################################################
+         ! Eq. (8): W_mbej = <mb||ej> + t_jf<mb||ef> - t_nb<mn||ej> - (1/2 t_jnfb + t_jf t_nb)<mn||ef>
+         ! ########################################################################################################################
+         ! <mb||ej> + t_jf<mb||ef>
+         allocate(scratch, mold=W_ovvo)
+         call dgemm_wrapper('N','T',nocc*nvirt**2,nocc,nvirt,cc_int%ovvv,t1,scratch)
+         W_ovvo = cc_int%ovvo + scratch
+
          !$omp parallel default(none) &
          !$omp private(m, n, i, j, e, f, b, a) &
          !$omp shared(sys, cc_int, cc_amp)
 
-         ! Instead of laying it out like (m,n,i,j) we use (i,j,m,n) because then the contraction tau_mn^ab W_mnij can be processed
-         ! by a simple dgemm call
-         !$omp do schedule(static, 10) collapse(4)
-         do n = 1, nocc
-            do m = 1, nocc
-               do j = 1, nocc
-                  do i = 1, nocc
-                     do e = 1, nvirt
-                        W_oooo(i,j,m,n) = W_oooo(i,j,m,n) + t1(j,e)*cc_int%oovo(n,m,e,i) - t1(i,e)*cc_int%oovo(n,m,e,j)
-                        do f = 1, nvirt
-                           W_oooo(i,j,m,n) = W_oooo(i,j,m,n) - 0.5*t2(j,i,f,e)*cc_int%oovv(m,n,f,e)
-                        end do
-                     end do
-                  end do
-               end do
-            end do
-         end do
-         !$omp end do
-
-         ! [TODO]: make a switch to on-the-fly W_vvvv computation, for when memory is limited
-         ! Similarly, we order it (e,f,a,b) for the contraction tau_ij^ef W_abef
-         !$omp do schedule(static, 10) collapse(4)
-         do b = 1, nvirt
-            do a = 1, nvirt
-               do f = 1, nvirt
-                  do e = 1, nvirt
-                     do n = 1, nocc
-                        W_vvvv(e,f,a,b) = W_vvvv(e,f,a,b) + t1(n,b)*cc_int%ovvv(n,a,e,f) - t1(n,a)*cc_int%ovvv(n,b,e,f)
-                     end do
-                  end do
-               end do
-            end do
-         end do
-         !$omp end do
 
          !$omp do schedule(static, 10) collapse(4)
          do j = 1, nocc
             do e = 1, nvirt
                do b = 1, nvirt
                   do m = 1, nocc
-                     do f = 1, nvirt
-                        W_ovvo(m,b,e,j) = W_ovvo(m,b,e,j) - t1(j,f)*cc_int%ovvv(m,b,f,e)
-                     end do
-
                      do n = 1, nocc
+                        ! [todo] - for whatever reason this loop is resistant to dgemm
                         W_ovvo(m,b,e,j) = W_ovvo(m,b,e,j) + t1(n,b)*cc_int%oovo(n,m,e,j)
                         do f = 1, nvirt
                            W_ovvo(m,b,e,j) = W_ovvo(m,b,e,j) - (0.5*t2(j,n,f,b) + t1(n,b)*t1(j,f)) * cc_int%oovv(n,m,f,e)
@@ -1075,7 +1081,14 @@ module ccsd
 
          tmp_t1 = tmp_t1/D_ia
          
+          ! ########################################################################################################################
          ! Update T2
+         ! Eq. (2) D_ijab t_ijab = <ij||ab> + P_ab(t_ijae (F_be - 1/2 t_mb F_me)) - P_(ij)(t_imab (F_mj + 1/2 t_je F_me)) 
+         !                         + 1/2 tau_mnab W_mnij + 1/2 tau_ijef W_abef + P_(ij)P_(ab)(t_imae W_mbej - t_ie t_ma <mb||ej>) 
+         !                         + P_(ij)(t_ie<ab||ej>) - P_(ab)(t_ma <mb||ij>)
+         ! ########################################################################################################################
+         ! <ij||ab>
+         tmp_t2 = cc_int%oovv
 
          !$omp parallel default(none) &
          !$omp shared(sys, cc_amp, int_store, cc_int)
@@ -1084,17 +1097,13 @@ module ccsd
             do a = 1, nvirt
                do j = 1, nocc
                   do i = 1, nocc
-                     tmp_t2(i,j,a,b) = cc_int%oovv(i,j,a,b)
                      do e = 1, nvirt
-                        tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) - t2(j,i,e,b)*F_vv(a,e) &
-                        - t1(i,e)*cc_int%ovvv(j,e,a,b) + t1(j,e)*cc_int%ovvv(i,e,a,b)
                         do m = 1, nocc
-                           tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) + 0.5*F_ov(m,e)*t2(i,j,b,e)*t1(m,a)
+                           tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) + 0.5*F_ov(m,e)*(t2(i,j,b,e)*t1(m,a)-t2(i,j,a,e)*t1(m,b))
                         end do
                      end do
                      do m = 1, nocc
-                        tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) - t2(m,i,b,a)*F_oo(m,j) + t2(m,j,b,a)*F_oo(m,i) &
-                        - t1(m,a)*cc_int%ovoo(m,b,i,j) + t1(m,b)*cc_int%ovoo(m,a,i,j)
+                        tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) - t2(m,i,b,a)*F_oo(m,j) + t2(m,j,b,a)*F_oo(m,i)
                         do e = 1, nvirt
                            tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) - 0.5*F_ov(m,e)*(t2(i,m,a,b)*t1(j,e)-&
                               t2(j,m,a,b)*t1(i,e))
@@ -1117,11 +1126,21 @@ module ccsd
          !$omp end do
          !$omp end parallel
 
-         allocate(tmp_t2_s, source=t2)
+         allocate(tmp_t2_s, reshape_tmp, source=t2)
 
-         ! t_ij^ae F_be
-         call dgemm_wrapper('N','T',nocc**2*nvirt,nvirt,nvirt,t2,(F_vv-matmul(transpose(t1),F_ov)/2),tmp_t2_s)
-         tmp_t2 = tmp_t2 + tmp_t2_s
+         ! P_(ab)(t_ijae (F_be - 1/2 t_mb F_me))
+         call dgemm_wrapper('N','T',nocc**2*nvirt,nvirt,nvirt,t2,F_vv,tmp_t2_s)
+         reshape_tmp = reshape(tmp_t2_s,shape(reshape_tmp),order=(/1,2,4,3/))
+         tmp_t2 = tmp_t2 + tmp_t2_s - reshape_tmp
+         ! P_(ij)(t_ie<ab||ej>) = P_(ij)(t_ie<ej||ab>)
+         call dgemm_wrapper('N','N',nocc,nocc*nvirt**2,nvirt,t1,cc_int%vovv,tmp_t2_s)
+         reshape_tmp = reshape(tmp_t2_s,shape(reshape_tmp),order=(/2,1,3,4/))
+         tmp_t2 = tmp_t2 + tmp_t2_s - reshape_tmp
+         ! @@@ -P_(ab)(t_ma <mb||ij>) = +P_(ab)(<ij||bm> t_ma)
+         ! [todo]: explain the signs!
+         call dgemm_wrapper('N','N',nocc**2*nvirt,nvirt,nocc,cc_int%oovo,t1,tmp_t2_s)
+         reshape_tmp = reshape(tmp_t2_s,shape(reshape_tmp),order=(/1,2,4,3/))
+         tmp_t2 = tmp_t2 - tmp_t2_s + reshape_tmp
          call dgemm_wrapper('N','N',nocc**2,nvirt**2,nocc**2,W_oooo,tau,tmp_t2_s)
          tmp_t2 = tmp_t2 + tmp_t2_s/2
          call dgemm_wrapper('N','N',nocc**2,nvirt**2,nvirt**2,tau,W_vvvv,tmp_t2_s)
