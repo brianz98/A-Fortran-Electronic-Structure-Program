@@ -975,41 +975,26 @@ module ccsd
 
          tmp_t1 = tmp_t1/D_ia
          
-         ! ########################################################################################################################
+         ! #########################################################################################################################
          ! Update T2
          ! Eq. (2) D_ijab t_ijab = <ij||ab> + P_ab(t_ijae (F_be - 1/2 t_mb F_me)) - P_(ij)(t_imab (F_mj + 1/2 t_je F_me)) 
          !                         + 1/2 tau_mnab W_mnij + 1/2 tau_ijef W_abef + P_(ij)P_(ab)(t_imae W_mbej - t_ie t_ma <mb||ej>) 
          !                         + P_(ij)(t_ie<ab||ej>) - P_(ab)(t_ma <mb||ij>)
-         ! ########################################################################################################################
+         ! #########################################################################################################################
          ! <ij||ab>
          tmp_t2 = cc_int%oovv
+         allocate(tmp_t2_s, reshape_tmp, mold=t2)
          !$omp parallel default(none) &
-         !$omp shared(sys, cc_amp, int_store, cc_int)
+         !$omp shared(sys, cc_amp, int_store, cc_int, tmp_t2_s)
          !$omp do schedule(static, 10) collapse(4)
          do b = 1, nvirt
             do a = 1, nvirt
                do j = 1, nocc
                   do i = 1, nocc
+                     tmp_t2_s(i,j,a,b) = sum(t2(:,i,:,a)*W_ovvo(:,b,:,j))
                      do m = 1, nocc
-                        ! [todo]: this can be cast into dgemm form
-                        ! -P_(ij)(t_imab F_mj)
-                        tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) - t2(m,i,b,a)*F_oo(m,j) + t2(m,j,b,a)*F_oo(m,i)
                         do e = 1, nvirt
-                           ! -1/2 P_(ij)(t_je F_me t_imab)
-                           tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) - 0.5*F_ov(m,e)*(t2(i,m,a,b)*t1(j,e)-&
-                              t2(j,m,a,b)*t1(i,e))
-                        end do
-                     end do
-
-                     do e = 1, nvirt
-                        do m = 1, nocc
-                           ! P_(ij)P_(ab)(t_imae W_mbej - t_ie t_ma <mb||ej>)
-                           ! [todo]: Maybe one of the permutations is good for dgemm, then the rest can be reshaped?
-                           tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) &
-                           + t2(m,i,e,a)*W_ovvo(m,b,e,j) - t1(i,e)*t1(m,a)*cc_int%ovvo(m,b,e,j)&
-                           - t2(m,j,e,a)*W_ovvo(m,b,e,i) + t1(j,e)*t1(m,a)*cc_int%ovvo(m,b,e,i)&
-                           - t2(m,i,e,b)*W_ovvo(m,a,e,j) + t1(i,e)*t1(m,b)*cc_int%ovvo(m,a,e,j)&
-                           + t2(m,j,e,b)*W_ovvo(m,a,e,i) - t1(j,e)*t1(m,b)*cc_int%ovvo(m,a,e,i)
+                           tmp_t2_s(i,j,a,b) = tmp_t2_s(i,j,a,b) - t1(i,e)*t1(m,a)*cc_int%ovvo(m,b,e,j)
                         end do 
                      end do
                   end do
@@ -1018,20 +1003,38 @@ module ccsd
          end do
          !$omp end do
          !$omp end parallel
+         reshape_tmp = reshape(tmp_t2_s,shape(reshape_tmp),order=(/2,1,3,4/))
+         tmp_t2 = tmp_t2 + tmp_t2_s - reshape_tmp
+         reshape_tmp = reshape(tmp_t2_s,shape(reshape_tmp),order=(/1,2,4,3/))
+         tmp_t2 = tmp_t2 - reshape_tmp
+         reshape_tmp = reshape(tmp_t2_s,shape(reshape_tmp),order=(/2,1,4,3/))
+         tmp_t2 = tmp_t2 + reshape_tmp
 
-         ! P_(ab)(t_ijae (F_be - 1/2 t_mb F_me))
-         allocate(tmp_t2_s, reshape_tmp, source=t2)
-         call dgemm_wrapper('N','T',nocc**2*nvirt,nvirt,nvirt,t2,(F_vv-0.5*matmul(transpose(t1),F_ov)),tmp_t2_s)
+         ! P_(ab)(t_ijae F_be)
+         call dgemm_wrapper('N','T',nocc**2*nvirt,nvirt,nvirt,t2,F_vv,tmp_t2_s)
          reshape_tmp = reshape(tmp_t2_s,shape(reshape_tmp),order=(/1,2,4,3/))
          tmp_t2 = tmp_t2 + tmp_t2_s - reshape_tmp
+         ! -1/2 P_(ab)(t_ijae t_mb F_me)
+         call dgemm_wrapper('N','T',nocc**2*nvirt,nvirt,nvirt,t2,matmul(transpose(t1),F_ov),tmp_t2_s)
+         reshape_tmp = reshape(tmp_t2_s,shape(reshape_tmp),order=(/1,2,4,3/))
+         tmp_t2 = tmp_t2 - (tmp_t2_s - reshape_tmp)/2
+         ! -1/2 P_(ij)(t_je F_me t_imab)
+         call dgemm_wrapper('N','N',nocc,nocc*nvirt**2,nocc,matmul(t1,transpose(F_ov)),t2,tmp_t2_s)
+         reshape_tmp = reshape(tmp_t2_s,shape(reshape_tmp),order=(/2,1,3,4/))
+         tmp_t2 = tmp_t2 - (tmp_t2_s - reshape_tmp)/2
          ! P_(ij)(t_ie<ab||ej>) = P_(ij)(t_ie<ej||ab>)
          call dgemm_wrapper('N','N',nocc,nocc*nvirt**2,nvirt,t1,cc_int%vovv,tmp_t2_s)
          reshape_tmp = reshape(tmp_t2_s,shape(reshape_tmp),order=(/2,1,3,4/))
          tmp_t2 = tmp_t2 + tmp_t2_s - reshape_tmp
          ! @@@ -P_(ab)(t_ma <mb||ij>) = +P_(ab)(<ij||bm> t_ma)
+         ! [todo]: explain the signs!
          call dgemm_wrapper('N','N',nocc**2*nvirt,nvirt,nocc,cc_int%oovo,t1,tmp_t2_s)
          reshape_tmp = reshape(tmp_t2_s,shape(reshape_tmp),order=(/1,2,4,3/))
-         tmp_t2 = tmp_t2 + tmp_t2_s - reshape_tmp
+         tmp_t2 = tmp_t2 - tmp_t2_s + reshape_tmp
+         ! -P_(ij)(t_imab F_mj)
+         call dgemm_wrapper('T','N',nocc,nocc*nvirt**2,nocc,F_oo,t2,tmp_t2_s)
+         reshape_tmp = reshape(tmp_t2_s,shape(reshape_tmp),order=(/2,1,3,4/))
+         tmp_t2 = tmp_t2 - tmp_t2_s + reshape_tmp
          ! + 1/2 tau_mnab W_mnij, but remember out W_mnij is reshaped as W_ijmn
          call dgemm_wrapper('N','N',nocc**2,nvirt**2,nocc**2,W_oooo,tau,tmp_t2_s)
          tmp_t2 = tmp_t2 + tmp_t2_s/2
@@ -1081,42 +1084,26 @@ module ccsd
 
          tmp_t1 = tmp_t1/D_ia
          
-          ! ########################################################################################################################
+         ! #########################################################################################################################
          ! Update T2
          ! Eq. (2) D_ijab t_ijab = <ij||ab> + P_ab(t_ijae (F_be - 1/2 t_mb F_me)) - P_(ij)(t_imab (F_mj + 1/2 t_je F_me)) 
          !                         + 1/2 tau_mnab W_mnij + 1/2 tau_ijef W_abef + P_(ij)P_(ab)(t_imae W_mbej - t_ie t_ma <mb||ej>) 
          !                         + P_(ij)(t_ie<ab||ej>) - P_(ab)(t_ma <mb||ij>)
-         ! ########################################################################################################################
+         ! #########################################################################################################################
          ! <ij||ab>
          tmp_t2 = cc_int%oovv
-
+         allocate(tmp_t2_s, reshape_tmp, mold=t2)
          !$omp parallel default(none) &
-         !$omp shared(sys, cc_amp, int_store, cc_int)
+         !$omp shared(sys, cc_amp, int_store, cc_int, tmp_t2_s)
          !$omp do schedule(static, 10) collapse(4)
          do b = 1, nvirt
             do a = 1, nvirt
                do j = 1, nocc
                   do i = 1, nocc
-                     do e = 1, nvirt
-                        do m = 1, nocc
-                           tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) + 0.5*F_ov(m,e)*(t2(i,j,b,e)*t1(m,a)-t2(i,j,a,e)*t1(m,b))
-                        end do
-                     end do
-                     do m = 1, nocc
-                        tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) - t2(m,i,b,a)*F_oo(m,j) + t2(m,j,b,a)*F_oo(m,i)
-                        do e = 1, nvirt
-                           tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) - 0.5*F_ov(m,e)*(t2(i,m,a,b)*t1(j,e)-&
-                              t2(j,m,a,b)*t1(i,e))
-                        end do
-                     end do
-
+                     tmp_t2_s(i,j,a,b) = sum(t2(:,i,:,a)*W_ovvo(:,b,:,j))
                      do m = 1, nocc
                         do e = 1, nvirt
-                           tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) &
-                           + t2(m,i,e,a)*W_ovvo(m,b,e,j) - tmp_t1(i,e)*tmp_t1(m,a)*cc_int%ovvo(m,b,e,j)&
-                           - t2(m,j,e,a)*W_ovvo(m,b,e,i) + tmp_t1(j,e)*tmp_t1(m,a)*cc_int%ovvo(m,b,e,i)&
-                           - t2(m,i,e,b)*W_ovvo(m,a,e,j) + tmp_t1(i,e)*tmp_t1(m,b)*cc_int%ovvo(m,a,e,j)&
-                           + t2(m,j,e,b)*W_ovvo(m,a,e,i) - tmp_t1(j,e)*tmp_t1(m,b)*cc_int%ovvo(m,a,e,i)
+                           tmp_t2_s(i,j,a,b) = tmp_t2_s(i,j,a,b) - t1(i,e)*t1(m,a)*cc_int%ovvo(m,b,e,j)
                         end do 
                      end do
                   end do
@@ -1125,13 +1112,25 @@ module ccsd
          end do
          !$omp end do
          !$omp end parallel
+         reshape_tmp = reshape(tmp_t2_s,shape(reshape_tmp),order=(/2,1,3,4/))
+         tmp_t2 = tmp_t2 + tmp_t2_s - reshape_tmp
+         reshape_tmp = reshape(tmp_t2_s,shape(reshape_tmp),order=(/1,2,4,3/))
+         tmp_t2 = tmp_t2 - reshape_tmp
+         reshape_tmp = reshape(tmp_t2_s,shape(reshape_tmp),order=(/2,1,4,3/))
+         tmp_t2 = tmp_t2 + reshape_tmp
 
-         allocate(tmp_t2_s, reshape_tmp, source=t2)
-
-         ! P_(ab)(t_ijae (F_be - 1/2 t_mb F_me))
+         ! P_(ab)(t_ijae F_be)
          call dgemm_wrapper('N','T',nocc**2*nvirt,nvirt,nvirt,t2,F_vv,tmp_t2_s)
          reshape_tmp = reshape(tmp_t2_s,shape(reshape_tmp),order=(/1,2,4,3/))
          tmp_t2 = tmp_t2 + tmp_t2_s - reshape_tmp
+         ! -1/2 P_(ab)(t_ijae t_mb F_me)
+         call dgemm_wrapper('N','T',nocc**2*nvirt,nvirt,nvirt,t2,matmul(transpose(t1),F_ov),tmp_t2_s)
+         reshape_tmp = reshape(tmp_t2_s,shape(reshape_tmp),order=(/1,2,4,3/))
+         tmp_t2 = tmp_t2 - (tmp_t2_s - reshape_tmp)/2
+         ! -1/2 P_(ij)(t_je F_me t_imab)
+         call dgemm_wrapper('N','N',nocc,nocc*nvirt**2,nocc,matmul(t1,transpose(F_ov)),t2,tmp_t2_s)
+         reshape_tmp = reshape(tmp_t2_s,shape(reshape_tmp),order=(/2,1,3,4/))
+         tmp_t2 = tmp_t2 - (tmp_t2_s - reshape_tmp)/2
          ! P_(ij)(t_ie<ab||ej>) = P_(ij)(t_ie<ej||ab>)
          call dgemm_wrapper('N','N',nocc,nocc*nvirt**2,nvirt,t1,cc_int%vovv,tmp_t2_s)
          reshape_tmp = reshape(tmp_t2_s,shape(reshape_tmp),order=(/2,1,3,4/))
@@ -1141,11 +1140,17 @@ module ccsd
          call dgemm_wrapper('N','N',nocc**2*nvirt,nvirt,nocc,cc_int%oovo,t1,tmp_t2_s)
          reshape_tmp = reshape(tmp_t2_s,shape(reshape_tmp),order=(/1,2,4,3/))
          tmp_t2 = tmp_t2 - tmp_t2_s + reshape_tmp
+         ! -P_(ij)(t_imab F_mj)
+         call dgemm_wrapper('T','N',nocc,nocc*nvirt**2,nocc,F_oo,t2,tmp_t2_s)
+         reshape_tmp = reshape(tmp_t2_s,shape(reshape_tmp),order=(/2,1,3,4/))
+         tmp_t2 = tmp_t2 - tmp_t2_s + reshape_tmp
+         ! + 1/2 tau_mnab W_mnij, but remember out W_mnij is reshaped as W_ijmn
          call dgemm_wrapper('N','N',nocc**2,nvirt**2,nocc**2,W_oooo,tau,tmp_t2_s)
          tmp_t2 = tmp_t2 + tmp_t2_s/2
+         ! + 1/2 tau_ijef W_abef
          call dgemm_wrapper('N','N',nocc**2,nvirt**2,nvirt**2,tau,W_vvvv,tmp_t2_s)
          tmp_t2 = tmp_t2 + tmp_t2_s/2
-         deallocate(tmp_t2_s)
+         deallocate(tmp_t2_s, reshape_tmp)
 
          t1 = tmp_t1
          t2 = tmp_t2/D_ijab
