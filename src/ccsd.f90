@@ -65,7 +65,7 @@ module ccsd
 
          type(system_t), intent(inout) :: sys
          type(int_store_t), intent(inout) :: int_store
-         integer :: i, j, k, a, b, p, q, r, s
+         integer :: p, q, r, s
          integer :: pr, qr, pa, pb, qa, qb, ra, rb, sa, sb
          real(dp) :: prqs, psqr
          real(dp) :: err
@@ -193,7 +193,7 @@ module ccsd
          ! Initialise intermediate arrays and DIIS data
          ! ############################################
          write(iunit, '(1X, A)') 'Initialise CC intermediate tensors and DIIS auxilliary arrays...'
-         call init_cc(sys, int_store, cc_amp, cc_int)
+         call init_cc(sys, cc_amp, cc_int)
          allocate(st%t2_old, source=cc_amp%t_ijab)
          call init_diis_cc_t(sys, diis)
 
@@ -254,7 +254,7 @@ module ccsd
 
          type(system_t), intent(inout) :: sys
          type(int_store_t), intent(inout) :: int_store
-         integer :: i, j, a, b, p, q, r, s
+         integer :: p, q, r, s
          integer :: pr, qr, pa, pb, qa, qb, ra, rb, sa, sb
          real(dp) :: prqs, psqr
          real(dp) :: err
@@ -354,7 +354,7 @@ module ccsd
          ! Initialise intermediate arrays and DIIS data
          ! ############################################
          write(iunit, '(1X, A)') 'Initialise CC intermediate tensors and DIIS auxilliary arrays...'
-         call init_cc(sys, int_store, cc_amp, cc_int)
+         call init_cc(sys, cc_amp, cc_int)
          allocate(st%t2_old, source=cc_amp%t_ijab)
          call init_diis_cc_t(sys, diis)
 
@@ -406,10 +406,8 @@ module ccsd
 
       end subroutine do_ccsd_spatial
 
-      subroutine init_cc(sys, int_store, cc_amp, cc_int)
+      subroutine init_cc(sys, cc_amp, cc_int)
          ! Initialise many CC related quantities.
-         ! In:
-         !     int_store: int_store_t object holding integrals.
          ! In/out:
          !     sys: system under study.
          !     cc_amp: CC amplitudes
@@ -419,11 +417,10 @@ module ccsd
          use error_handling, only: check_allocate 
 
          type(system_t), intent(inout) :: sys
-         type(int_store_t), intent(in) :: int_store
          type(cc_amp_t), intent(inout) :: cc_amp
          type(cc_int_t), intent(inout) :: cc_int
 
-         integer :: p, q, r, s, i, j, a, b, ierr
+         integer :: i, j, a, b, ierr
          integer, parameter :: iunit = 6
 
          write(iunit, '(1X, A)') 'Forming energy denominator matrices...'
@@ -730,7 +727,7 @@ module ccsd
          type(system_t), intent(in) :: sys
          type(cc_amp_t), intent(in) :: cc_amp
          type(cc_int_t), intent(inout) :: cc_int
-         integer :: m, n, i, j, e, f, b, a
+         integer :: m, n, j, e, f, b
          real(p), dimension(:,:,:,:), allocatable :: scratch, reshape_scratch
 
          associate(nbasis=>sys%nbasis, nocc=>sys%nocc, nvirt=>sys%nvirt, t1=>cc_amp%t_ia, t2=>cc_amp%t_ijab,&
@@ -835,7 +832,7 @@ module ccsd
 
          real(p), dimension(:,:,:,:), allocatable :: tmp_t2_s, reshape_tmp
 
-         integer :: i, j, a, b, m, n, e, f
+         integer :: i, j, a, b, m, e
 
          associate(tmp_t1=>cc_int%tmp_tia,tmp_t2=>cc_int%tmp_tijab,t1=>cc_amp%t_ia,t2=>cc_amp%t_ijab,asym=>int_store%asym_spinorb, &
             F_oo=>cc_int%F_oo,F_ov=>cc_int%F_ov,F_vv=>cc_int%F_vv,D_ia=>cc_int%D_ia,D_ijab=>cc_int%D_ijab,W_oooo=>cc_int%W_oooo, &

@@ -42,7 +42,7 @@ module integrals
             type(system_t), intent(inout) :: sys
 
             character(20) :: enuc_f, ovlp_f, ke_f, ele_nuc_f, eri_f
-            integer :: i, j, iunit, ir, natoms, ios, nbasis
+            integer :: iunit, ir, ios, nbasis
             integer :: ibasis, jbasis, abasis, bbasis, ij_ind, ab_ind
             real(p) :: intgrl
 
@@ -205,7 +205,6 @@ module integrals
             type(int_store_t), intent(in) :: int_store
 
             integer :: iunit = 6
-            integer :: i
 
             write(iunit, '(1X, 20("-"))')
             write(iunit, '(1X, A)') 'System information'

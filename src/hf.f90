@@ -28,13 +28,10 @@ module hf
 
          type(mat_t) :: ovlp, fockmat
          real(p) :: ortmat(sys%nbasis,sys%nbasis)
-         real(p) :: fock(sys%nbasis,sys%nbasis)
-         real(p) :: coeff(sys%nbasis,sys%nbasis)
          real(p) :: density(sys%nbasis,sys%nbasis)
-         real(p) :: tmpmat(sys%nbasis,sys%nbasis)
 
          type(state_t) :: st
-         integer :: iter, maxiter, iunit, i, j, ierr
+         integer :: iter, maxiter, iunit, i
          logical :: conv = .false.
          type(diis_t) :: diis
 
@@ -143,10 +140,8 @@ module hf
          diis%iter = diis%iter+1
          if (diis%iter > diis%n_errmat) diis%iter = diis%iter - diis%n_errmat
          if (diis%n_active < diis%n_errmat) diis%n_active = diis%n_active+1
-         diis%F(diis%iter,:,:) = 0.0_p
-         diis%e(diis%iter,:,:) = 0.0_p
-         diis%F(diis%iter,:,:) = fock(:,:)
-         diis%e(diis%iter,:,:) = matmul(fock, matmul(density,ovlp)) &
+         diis%F(:,:,diis%iter) = fock(:,:)
+         diis%e(:,:,diis%iter) = matmul(fock, matmul(density,ovlp)) &
                                - matmul(ovlp, matmul(density, fock))
 
          associate(n=>diis%n_active, nerr=>diis%n_errmat)
@@ -162,14 +157,14 @@ module hf
             diis%c = diis%rhs
             do i = 1, n
                do j = 1, i
-                  diis%B(i,j) = sum(diis%e(i,:,:)*diis%e(j,:,:))
+                  diis%B(i,j) = sum(diis%e(:,:,i)*diis%e(:,:,j))
                end do
             end do
             call linsolve(diis%B, diis%c, ierr)
             if (ierr /= 0) call error('hf::update_diis', 'Linear solve failed!')
             fock = 0.0_p
             do i = 1, n
-               fock = fock + diis%c(i) * diis%F(i,:,:)
+               fock = fock + diis%c(i) * diis%F(:,:,i)
             end do
          end if
          end associate
@@ -187,8 +182,8 @@ module hf
             diis%use_diis = .false.
          else
             associate(n=>sys%nbasis)
-               allocate(diis%e(diis%n_errmat,n,n), source=0.0_p)
-               allocate(diis%F(diis%n_errmat,n,n), source=0.0_p)
+               allocate(diis%e(n,n,diis%n_errmat), source=0.0_p)
+               allocate(diis%F(n,n,diis%n_errmat), source=0.0_p)
             end associate
          end if
       end subroutine init_diis_t

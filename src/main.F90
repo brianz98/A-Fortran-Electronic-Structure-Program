@@ -14,7 +14,7 @@ program main
 
     type(int_store_t) :: int_store
     type(system_t) :: sys
-    integer :: i, iunit
+    integer :: iunit
     integer(kind=8) :: t0, t1, count_rate, count_max
     integer :: date_values(8)
 
