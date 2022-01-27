@@ -41,7 +41,6 @@ module ccsd
       ! In more detail, as e_i = T_i+1 - T_i, and we overwrite T1 when T8 is the newest T matrix, we must make sure we never 
       ! subtract the newest T matrix with the oldest T matrix, and since doing that is tricky in a loop we keep the idx lookup array
 
-      ! [TODO]: kick the slowest index to the last!
       logical :: use_diis = .true.
       integer :: n_errmat = 8
       integer :: n_active = 0
@@ -57,8 +56,8 @@ module ccsd
    contains
 
       subroutine do_ccsd_spinorb(sys, int_store)
-         ! This is the spinorbital formulation of J.F. Stanton, J. Gauss, J.D. Watts, and R.J. Bartlett, J. Chem. Phys. volume 94, pp. 4334-4345 (1991) (https://doi.org/10.1063/1.460620)
-         ! [TODO]: closed-shell (spatial) formulation of Hirata, S.; Podeszwa, R.; Tobita, M.; Bartlett, R. J. J. Chem. Phys. 2004, 120 (6), 2581 (https://doi.org/10.1063/1.1637577)
+         ! This is the spinorbital formulation of J.F. Stanton, J. Gauss, J.D. Watts, and R.J. Bartlett, 
+         ! J. Chem. Phys. volume 94, pp. 4334-4345 (1991) (https://doi.org/10.1063/1.460620)
 
          use integrals, only: int_store_t, eri_ind
          use error_handling, only: error, check_allocate
@@ -97,7 +96,6 @@ module ccsd
          call check_allocate('int_store%asym_spinorb', sys%nbasis**4*16, ierr)
 
          associate(n=>sys%nbasis, asym=>int_store%asym_spinorb, eri=>int_store%eri_mo)
-         ! [TODO]: this isn't necessary but easier for debugging, change to spin lookup arrays or something similar
          do p = 1, n
             pa = 2*p-1
             pb = pa+1
@@ -686,33 +684,20 @@ module ccsd
          !$omp private(a, e, f, m, n, i) &
          !$omp shared(sys, cc_int, cc_amp)
 
-         ! F_ae = \sum_{mf} t_m^f * <ma||fe> - 0.5 \sum_{mnf} \tau~_{mn}^{af} <mn||ef>
+         ! F_ae = t_m^f * <ma||fe> - 0.5 tau~_{mn}^{af} <mn||ef>
          !$omp do schedule(static, 10) collapse(2)
          do a = 1, nvirt
             do e = 1, nvirt
-               do m = 1, nocc
-                  do f = 1, nvirt
-                     F_vv(a,e) = F_vv(a,e) + t_ia(m,f) * cc_int%ovvv(m,a,f,e)
-                     do n = 1, nocc
-                        F_vv(a,e) = F_vv(a,e) + 0.5*tau_tilde(n,m,f,a)*cc_int%oovv(n,m,e,f)
-                     end do
-                  end do
-               end do
+               F_vv(a,e) = F_vv(a,e) + sum(t_ia(:,:)*cc_int%ovvv(:,a,:,e)) + 0.5*sum(tau_tilde(:,:,:,a)*cc_int%oovv(:,:,e,:))
             end do
          end do
          !$omp end do
 
-         ! F_mi = \sum_{en} t_n^e <mn||ie> + 0.5 \sum_{nef} \tau~_{in}^{ef} <mn||ef>
+         ! F_mi = t_n^e <mn||ie> + 0.5 tau~_{in}^{ef} <mn||ef>
          !$omp do schedule(static, 10) collapse(2)
          do m = 1, nocc
             do i = 1, nocc
-               do e = 1, nvirt
-                  do n = 1, nocc
-                     ! [todo] - This is terrible cache-wise, but does it warrant creating a new slice/doing a reshape?
-                     F_oo(m,i) = F_oo(m,i) + 0.5*dot_product(tau_tilde(n,i,:,e),cc_int%oovv(m,n,e,:)) &
-                                 - t_ia(n,e)*cc_int%ooov(n,m,i,e)
-                  end do
-               end do
+               F_oo(m,i) = F_oo(m,i) + 0.5*sum(tau_tilde(i,:,:,:)*cc_int%oovv(m,:,:,:)) - sum(t_ia(:,:)*cc_int%ooov(:,m,i,:))
             end do
          end do
          !$omp end do
@@ -721,7 +706,6 @@ module ccsd
          !$omp do schedule(static, 10) collapse(2)
          do e = 1, nvirt
             do m = 1, nocc
-               ! [todo] - same as above, also investigate if sum(A*B) is better in cases of missed cache
                F_ov(m,e) = F_ov(m,e) + sum(t_ia(:,:)*cc_int%oovv(m,:,e,:))
             end do
          end do
@@ -752,13 +736,12 @@ module ccsd
          associate(nbasis=>sys%nbasis, nocc=>sys%nocc, nvirt=>sys%nvirt, t1=>cc_amp%t_ia, t2=>cc_amp%t_ijab,&
             W_oooo=>cc_int%W_oooo, W_ovvo=>cc_int%W_ovvo, tau=>cc_int%tau, W_vvvv=>cc_int%W_vvvv)
 
-         if (.true.) then
          ! Instead of laying it out like (m,n,i,j) we use (i,j,m,n) because then the contraction tau_mn^ab W_mnij can be processed
          ! by a simple dgemm call
          allocate(scratch,reshape_scratch, mold=W_oooo)
-         ! ########################################################################################################################
+         ! #########################################################################################################################
          ! Eq. (6): W_mnij = <mn||ij> + P_(ij) t_j^e <mn||ie> + 1/2 tau_ij^ef <mn||ef>
-         ! ########################################################################################################################
+         ! #########################################################################################################################
          ! + P_(ij) t_j^e <mn||ie>
          call dgemm_wrapper('N','T',nocc**3,nocc,nvirt,cc_int%ooov,t1,scratch)
          reshape_scratch = reshape(scratch, shape(reshape_scratch), order=(/1,2,4,3/))
@@ -778,31 +761,32 @@ module ccsd
          W_oooo = reshape_scratch
          deallocate(scratch,reshape_scratch)
 
-         ! ########################################################################################################################
+         ! #########################################################################################################################
          ! Eq. (7): W_abef = <ab||ef> - P_(ab)(t_mb<am||ef>)
-         ! ########################################################################################################################
-         ! @@@ - P_(ab) t_m^b <am||ef> = + P_(ab) (t_b^m)^T <ma||ef>
-         ! [todo]: explain the signs!!
+         ! #########################################################################################################################
+         ! - P_(ab) t_m^b <am||ef> = + P_(ab) (t_b^m)^T <ma||ef>
          allocate(scratch,reshape_scratch, mold=W_vvvv)
          call dgemm_wrapper('T','N',nvirt,nvirt**3,nocc,t1,cc_int%ovvv,scratch)
          reshape_scratch = reshape(scratch,shape(reshape_scratch),order=(/2,1,3,4/))
-         W_vvvv = cc_int%vvvv - scratch + reshape_scratch
+         ! The reshaped tensor is the unpermuted one!
+         W_vvvv = cc_int%vvvv + reshape_scratch - scratch
 
          ! We reshape it to W_efab to make contractions more amenable to dgemm
          reshape_scratch = reshape(W_vvvv,shape(reshape_scratch),order=(/3,4,1,2/))
          W_vvvv = reshape_scratch
          deallocate(scratch,reshape_scratch)
 
-         ! ########################################################################################################################
+         ! #########################################################################################################################
          ! Eq. (8): W_mbej = <mb||ej> + t_jf<mb||ef> - t_nb<mn||ej> - (1/2 t_jnfb + t_jf t_nb)<mn||ef>
-         ! ########################################################################################################################
+         ! #########################################################################################################################
          ! <mb||ej> + t_jf<mb||ef>
          allocate(scratch, reshape_scratch, mold=W_ovvo)
          call dgemm_wrapper('N','T',nocc*nvirt**2,nocc,nvirt,cc_int%ovvv,t1,scratch)
          W_ovvo = cc_int%ovvo + scratch
 
-         ! @@@ - t_nb<mn||ej> = +(t_bn)^T<nm||ej>
+         ! - t_nb<mn||ej> = +(t_bn)^T<nm||ej>
          call dgemm_wrapper('T','N',nvirt,nocc**2*nvirt,nocc,t1,cc_int%oovo,scratch)
+         ! We need to reshape it because currently the scratch tensor is b,m,e,j
          reshape_scratch = reshape(scratch,shape(reshape_scratch),order=(/2,1,3,4/))
          W_ovvo = W_ovvo + reshape_scratch
          deallocate(scratch, reshape_scratch)
@@ -817,7 +801,8 @@ module ccsd
                   do m = 1, nocc
                      do n = 1, nocc
                         do f = 1, nvirt
-                           ! [todo]: bad cache behaviour (last term), however dgemm isn't that much better herem since two reshapes needed.
+                           ! [todo]: bad cache behaviour (last term), 
+                           ! however dgemm isn't that much better here since two reshapes needed.
                            W_ovvo(m,b,e,j) = W_ovvo(m,b,e,j) - (0.5*t2(j,n,f,b) + t1(n,b)*t1(j,f)) * cc_int%oovv(m,n,e,f)
                         end do
                      end do
@@ -828,80 +813,6 @@ module ccsd
          !$omp end do
          !$omp end parallel
          
-         else
-
-         allocate(scratch,reshape_scratch, mold=W_oooo)
-         ! ########################################################################################################################
-         ! Eq. (6): W_mnij = <mn||ij> + P_(ij) t_j^e <mn||ie> + 1/2 tau_ij^ef <mn||ef>
-         ! ########################################################################################################################
-         ! + P_(ij) t_j^e <mn||ie>
-         call dgemm_wrapper('N','T',nocc**3,nocc,nvirt,cc_int%ooov,t1,scratch)
-         reshape_scratch = reshape(scratch, shape(reshape_scratch), order=(/1,2,4,3/))
-         W_oooo = cc_int%oooo + scratch - reshape_scratch
-         deallocate(reshape_scratch)
-
-         ! 1/2 tau_ijef <mn||ef>
-         allocate(reshape_scratch(nvirt,nvirt,nocc,nocc))
-         reshape_scratch = reshape(tau, shape(reshape_scratch), order=(/3,4,1,2/))
-         call dgemm_wrapper('N','N',nocc**2,nocc**2,nvirt**2,cc_int%oovv,reshape_scratch,scratch)
-         W_oooo = W_oooo + scratch/2
-         deallocate(reshape_scratch)
-
-         ! We reshape it to W_ijmn to make contractions more amenable to dgemm
-         allocate(reshape_scratch, mold=W_oooo)
-         reshape_scratch = reshape(W_oooo, shape(reshape_scratch), order=(/3,4,1,2/))
-         W_oooo = reshape_scratch
-         deallocate(scratch,reshape_scratch)
-
-         ! ########################################################################################################################
-         ! Eq. (7): W_abef = <ab||ef> - P_(ab)(t_mb<am||ef>)
-         ! ########################################################################################################################
-         ! [todo]: explain the signs!!
-         allocate(scratch,reshape_scratch, mold=W_vvvv)
-         call dgemm_wrapper('T','N',nvirt,nvirt**3,nocc,t1,cc_int%ovvv,scratch)
-         reshape_scratch = reshape(scratch,shape(reshape_scratch),order=(/2,1,3,4/))
-         W_vvvv = cc_int%vvvv - scratch + reshape_scratch
-
-         ! We reshape it to W_efab to make contractions more amenable to dgemm
-         reshape_scratch = reshape(W_vvvv,shape(reshape_scratch),order=(/3,4,1,2/))
-         W_vvvv = reshape_scratch
-         deallocate(scratch, reshape_scratch)
-
-         ! ########################################################################################################################
-         ! Eq. (8): W_mbej = <mb||ej> + t_jf<mb||ef> - t_nb<mn||ej> - (1/2 t_jnfb + t_jf t_nb)<mn||ef>
-         ! ########################################################################################################################
-         ! <mb||ej> + t_jf<mb||ef>
-         allocate(scratch, reshape_scratch, mold=W_ovvo)
-         call dgemm_wrapper('N','T',nocc*nvirt**2,nocc,nvirt,cc_int%ovvv,t1,scratch)
-         W_ovvo = cc_int%ovvo + scratch
-
-         ! @@@ - t_nb<mn||ej> = +(t_bn)^T<nm||ej>
-         call dgemm_wrapper('T','N',nvirt,nocc**2*nvirt,nocc,t1,cc_int%oovo,scratch)
-         reshape_scratch = reshape(scratch,shape(reshape_scratch),order=(/2,1,3,4/))
-         W_ovvo = W_ovvo + reshape_scratch
-         deallocate(scratch, reshape_scratch)
-
-         !$omp parallel default(none) &
-         !$omp private(m, n, i, j, e, f, b, a) &
-         !$omp shared(sys, cc_int, cc_amp)
-         !$omp do schedule(static, 10) collapse(4)
-         do j = 1, nocc
-            do e = 1, nvirt
-               do b = 1, nvirt
-                  do m = 1, nocc
-                     do n = 1, nocc
-                        do f = 1, nvirt
-                           W_ovvo(m,b,e,j) = W_ovvo(m,b,e,j) - (0.5*t2(j,n,f,b) + t1(n,b)*t1(j,f)) * cc_int%oovv(n,m,f,e)
-                        end do
-                     end do
-                  end do
-               end do
-            end do
-         end do
-         !$omp end do
-         !$omp end parallel
-         end if
-
          end associate
       end subroutine build_W
 
@@ -931,11 +842,10 @@ module ccsd
             W_ovvo=>cc_int%W_ovvo,tau=>cc_int%tau,tau_tilde=>cc_int%tau_tilde,nocc=>sys%nocc,nvirt=>sys%nvirt,&
             W_vvvv=>cc_int%W_vvvv)
 
-         if (.true.) then
-         ! ########################################################################################################################
+         ! #########################################################################################################################
          ! Update T1
          ! Eq. (1) D_ia t_i^a = t_ie F_ae - t_ma F_mi + t_imae F_me - t_nf <na||if> -1/2 t_imef <ma||ef> - 1/2 t_mnae <nm||ei>
-         ! ########################################################################################################################
+         ! #########################################################################################################################
 
          ! #### t_ie F_ae
          tmp_t1 = matmul(t1,transpose(F_vv))
@@ -948,6 +858,7 @@ module ccsd
          !$omp do schedule(static, 10) collapse(2)
          do a = 1, nvirt
             do i = 1, nocc
+               ! We can't do sum(A + B) because the order of (i,a) doesn't generally match between these
                tmp_t1(i,a) = tmp_t1(i,a) + sum(t1(:,:)*cc_int%ovvo(:,a,:,i)) + sum(t2(:,i,:,a)*F_ov(:,:)) &
                                          + 0.5*(sum(t2(:,i,:,:)*cc_int%ovvv(:,a,:,:)) - sum(t2(:,:,:,a)*cc_int%oovo(:,:,:,i)))
             end do
@@ -1008,11 +919,11 @@ module ccsd
          call dgemm_wrapper('N','N',nocc,nocc*nvirt**2,nvirt,t1,cc_int%vovv,tmp_t2_s)
          reshape_tmp = reshape(tmp_t2_s,shape(reshape_tmp),order=(/2,1,3,4/))
          tmp_t2 = tmp_t2 + tmp_t2_s - reshape_tmp
-         ! @@@ -P_(ab)(t_ma <mb||ij>) = +P_(ab)(<ij||bm> t_ma)
-         ! [todo]: explain the signs!
+         ! -P_(ab)(t_ma <mb||ij>) = +P_(ab)(<ij||bm> t_ma)
          call dgemm_wrapper('N','N',nocc**2*nvirt,nvirt,nocc,cc_int%oovo,t1,tmp_t2_s)
          reshape_tmp = reshape(tmp_t2_s,shape(reshape_tmp),order=(/1,2,4,3/))
-         tmp_t2 = tmp_t2 - tmp_t2_s + reshape_tmp
+         ! The reshaped tensor is the unpermuted one, since tmp_t2_s is i,j,b,a
+         tmp_t2 = tmp_t2 + reshape_tmp - tmp_t2_s
          ! -P_(ij)(t_imab F_mj)
          call dgemm_wrapper('T','N',nocc,nocc*nvirt**2,nocc,F_oo,t2,tmp_t2_s)
          reshape_tmp = reshape(tmp_t2_s,shape(reshape_tmp),order=(/2,1,3,4/))
@@ -1028,102 +939,6 @@ module ccsd
          t1 = tmp_t1
          t2 = tmp_t2/D_ijab
 
-         else
-         ! Update T1
-
-         tmp_t1 = matmul(t1,transpose(F_vv))
-         tmp_t1 = tmp_t1 - matmul(transpose(F_oo),t1)
-
-         !$omp parallel default(none) &
-         !$omp shared(sys, cc_amp, int_store, cc_int)
-
-         ! Implied barrier here, better than master which doesn't have implied barrier
-         ! tmp_t1 can be shared as each loop iteration will update a unique element of it.
-         
-         !$omp do schedule(static, 10) collapse(2)
-         do a = 1, nvirt
-            do i = 1, nocc
-               tmp_t1(i,a) = tmp_t1(i,a) + sum(t1(:,:)*cc_int%ovvo(:,a,:,i)) + sum(t2(:,i,:,a)*F_ov(:,:)) &
-                                         + 0.5*(sum(t2(:,i,:,:)*cc_int%ovvv(:,a,:,:)) - sum(t2(:,:,:,a)*cc_int%oovo(:,:,:,i)))
-            end do
-         end do
-         !$omp end do
-         !$omp end parallel
-
-         tmp_t1 = tmp_t1/D_ia
-         
-         ! #########################################################################################################################
-         ! Update T2
-         ! Eq. (2) D_ijab t_ijab = <ij||ab> + P_ab(t_ijae (F_be - 1/2 t_mb F_me)) - P_(ij)(t_imab (F_mj + 1/2 t_je F_me)) 
-         !                         + 1/2 tau_mnab W_mnij + 1/2 tau_ijef W_abef + P_(ij)P_(ab)(t_imae W_mbej - t_ie t_ma <mb||ej>) 
-         !                         + P_(ij)(t_ie<ab||ej>) - P_(ab)(t_ma <mb||ij>)
-         ! #########################################################################################################################
-         ! <ij||ab>
-         tmp_t2 = cc_int%oovv
-         allocate(tmp_t2_s, reshape_tmp, mold=t2)
-         !$omp parallel default(none) &
-         !$omp shared(sys, cc_amp, int_store, cc_int, tmp_t2_s)
-         !$omp do schedule(static, 10) collapse(4)
-         do b = 1, nvirt
-            do a = 1, nvirt
-               do j = 1, nocc
-                  do i = 1, nocc
-                     tmp_t2_s(i,j,a,b) = sum(t2(:,i,:,a)*W_ovvo(:,b,:,j))
-                     do m = 1, nocc
-                        do e = 1, nvirt
-                           tmp_t2_s(i,j,a,b) = tmp_t2_s(i,j,a,b) - t1(i,e)*t1(m,a)*cc_int%ovvo(m,b,e,j)
-                        end do 
-                     end do
-                  end do
-               end do
-            end do
-         end do
-         !$omp end do
-         !$omp end parallel
-         reshape_tmp = reshape(tmp_t2_s,shape(reshape_tmp),order=(/2,1,3,4/))
-         tmp_t2 = tmp_t2 + tmp_t2_s - reshape_tmp
-         reshape_tmp = reshape(tmp_t2_s,shape(reshape_tmp),order=(/1,2,4,3/))
-         tmp_t2 = tmp_t2 - reshape_tmp
-         reshape_tmp = reshape(tmp_t2_s,shape(reshape_tmp),order=(/2,1,4,3/))
-         tmp_t2 = tmp_t2 + reshape_tmp
-
-         ! P_(ab)(t_ijae F_be)
-         call dgemm_wrapper('N','T',nocc**2*nvirt,nvirt,nvirt,t2,F_vv,tmp_t2_s)
-         reshape_tmp = reshape(tmp_t2_s,shape(reshape_tmp),order=(/1,2,4,3/))
-         tmp_t2 = tmp_t2 + tmp_t2_s - reshape_tmp
-         ! -1/2 P_(ab)(t_ijae t_mb F_me)
-         call dgemm_wrapper('N','T',nocc**2*nvirt,nvirt,nvirt,t2,matmul(transpose(t1),F_ov),tmp_t2_s)
-         reshape_tmp = reshape(tmp_t2_s,shape(reshape_tmp),order=(/1,2,4,3/))
-         tmp_t2 = tmp_t2 - (tmp_t2_s - reshape_tmp)/2
-         ! -1/2 P_(ij)(t_je F_me t_imab)
-         call dgemm_wrapper('N','N',nocc,nocc*nvirt**2,nocc,matmul(t1,transpose(F_ov)),t2,tmp_t2_s)
-         reshape_tmp = reshape(tmp_t2_s,shape(reshape_tmp),order=(/2,1,3,4/))
-         tmp_t2 = tmp_t2 - (tmp_t2_s - reshape_tmp)/2
-         ! P_(ij)(t_ie<ab||ej>) = P_(ij)(t_ie<ej||ab>)
-         call dgemm_wrapper('N','N',nocc,nocc*nvirt**2,nvirt,t1,cc_int%vovv,tmp_t2_s)
-         reshape_tmp = reshape(tmp_t2_s,shape(reshape_tmp),order=(/2,1,3,4/))
-         tmp_t2 = tmp_t2 + tmp_t2_s - reshape_tmp
-         ! @@@ -P_(ab)(t_ma <mb||ij>) = +P_(ab)(<ij||bm> t_ma)
-         ! [todo]: explain the signs!
-         call dgemm_wrapper('N','N',nocc**2*nvirt,nvirt,nocc,cc_int%oovo,t1,tmp_t2_s)
-         reshape_tmp = reshape(tmp_t2_s,shape(reshape_tmp),order=(/1,2,4,3/))
-         tmp_t2 = tmp_t2 - tmp_t2_s + reshape_tmp
-         ! -P_(ij)(t_imab F_mj)
-         call dgemm_wrapper('T','N',nocc,nocc*nvirt**2,nocc,F_oo,t2,tmp_t2_s)
-         reshape_tmp = reshape(tmp_t2_s,shape(reshape_tmp),order=(/2,1,3,4/))
-         tmp_t2 = tmp_t2 - tmp_t2_s + reshape_tmp
-         ! + 1/2 tau_mnab W_mnij, but remember out W_mnij is reshaped as W_ijmn
-         call dgemm_wrapper('N','N',nocc**2,nvirt**2,nocc**2,W_oooo,tau,tmp_t2_s)
-         tmp_t2 = tmp_t2 + tmp_t2_s/2
-         ! + 1/2 tau_ijef W_abef
-         call dgemm_wrapper('N','N',nocc**2,nvirt**2,nvirt**2,tau,W_vvvv,tmp_t2_s)
-         tmp_t2 = tmp_t2 + tmp_t2_s/2
-         deallocate(tmp_t2_s, reshape_tmp)
-
-         t1 = tmp_t1
-         t2 = tmp_t2/D_ijab
-
-         end if
          end associate
 
       end subroutine update_amplitudes
@@ -1159,7 +974,7 @@ module ccsd
             !$omp shared(sys,st,cc_amp,ecc,rmst2,cc_int) 
             ecc = 0.0_p
             rmst2 = 0.0_p
-            !$omp do schedule(static, 10) collapse(4) reduction(+:ecc,rmst2)
+            !$omp do schedule(static, 10) collapse(2) reduction(+:ecc,rmst2)
             do b = 1, nvirt
                do a = 1, nvirt
                   do j = 1, nocc
@@ -1175,7 +990,6 @@ module ccsd
             !$omp end parallel
             st%energy = ecc
             st%t2_old = t2
-            ! [TODO]: stop hard-coding tolerance, or at least unify it with HF
             if (sqrt(rmst2) < sys%ccsd_t_tol .and. abs(st%energy-st%energy_old) < sys%ccsd_e_tol) conv = .true.
 
          end associate
