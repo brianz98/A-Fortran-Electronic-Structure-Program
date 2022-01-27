@@ -941,33 +941,12 @@ module ccsd
 
          !$omp parallel default(none) &
          !$omp shared(sys, cc_amp, int_store, cc_int)
-
-         ! Implied barrier here, better than master which doesn't have implied barrier
          ! tmp_t1 can be shared as each loop iteration will update a unique element of it.
-         
          !$omp do schedule(static, 10) collapse(2)
          do a = 1, nvirt
             do i = 1, nocc
-               do m = 1, nocc
-                  do e = 1, nvirt
-                     ! #### t_imae F_me
-                     tmp_t1(i,a) = tmp_t1(i,a) + t2(m,i,e,a)*F_ov(m,e)
-                     do f = 1, nvirt
-                        ! #### -1/2 t_imef <ma||ef>
-                        tmp_t1(i,a) = tmp_t1(i,a) - 0.5*t2(m,i,f,e)*cc_int%ovvv(m,a,e,f)
-                     end do
-                     do n = 1, nocc
-                        ! #### -1/2 t_mnae <nm||ei>
-                        tmp_t1(i,a) = tmp_t1(i,a) - 0.5*t2(n,m,e,a)*cc_int%oovo(n,m,e,i)
-                     end do
-                  end do
-               end do
-               do e = 1, nvirt
-                  do n = 1, nocc
-                     ! #### -t_nf <na||if>
-                     tmp_t1(i,a) = tmp_t1(i,a) + t1(n,e)*cc_int%ovvo(n,a,e,i)
-                  end do
-               end do
+               tmp_t1(i,a) = tmp_t1(i,a) + sum(t1(:,:)*cc_int%ovvo(:,a,:,i)) + sum(t2(:,i,:,a)*F_ov(:,:)) &
+                                         + 0.5*(sum(t2(:,i,:,:)*cc_int%ovvv(:,a,:,:)) - sum(t2(:,:,:,a)*cc_int%oovo(:,:,:,i)))
             end do
          end do
          !$omp end do
@@ -1061,22 +1040,8 @@ module ccsd
          !$omp do schedule(static, 10) collapse(2)
          do a = 1, nvirt
             do i = 1, nocc
-               do m = 1, nocc
-                  do e = 1, nvirt
-                     tmp_t1(i,a) = tmp_t1(i,a) + t2(m,i,e,a)*F_ov(m,e)
-                     do f = 1, nvirt
-                        tmp_t1(i,a) = tmp_t1(i,a) + 0.5*t2(m,i,f,e)*cc_int%ovvv(m,a,f,e)
-                     end do
-                     do n = 1, nocc
-                        tmp_t1(i,a) = tmp_t1(i,a) - 0.5*t2(n,m,e,a)*cc_int%oovo(n,m,e,i)
-                     end do
-                  end do
-               end do
-               do e = 1, nvirt
-                  do n = 1, nocc
-                     tmp_t1(i,a) = tmp_t1(i,a) + t1(n,e)*cc_int%ovvo(n,a,e,i)
-                  end do
-               end do
+               tmp_t1(i,a) = tmp_t1(i,a) + sum(t1(:,:)*cc_int%ovvo(:,a,:,i)) + sum(t2(:,i,:,a)*F_ov(:,:)) &
+                                         + 0.5*(sum(t2(:,i,:,:)*cc_int%ovvv(:,a,:,:)) - sum(t2(:,:,:,a)*cc_int%oovo(:,:,:,i)))
             end do
          end do
          !$omp end do
