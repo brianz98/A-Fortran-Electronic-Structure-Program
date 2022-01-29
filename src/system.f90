@@ -39,6 +39,8 @@ module system
       real(p) :: ccsd_e_tol = 1e-6
       real(p) :: ccsd_t_tol = 1e-6
       integer :: ccsd_diis_n_errmat = 8
+      integer :: scf_maxiter = 50
+      integer :: ccsd_maxiter = 50
 
       ! Level of theory (up to)
       logical :: restricted
@@ -63,13 +65,14 @@ module system
            use error_handling, only: error
            type(system_t), intent(inout) :: sys
            real(p) :: scf_e_tol, scf_d_tol, ccsd_e_tol, ccsd_t_tol
-           integer :: scf_diis_n_errmat, ccsd_diis_n_errmat
+           integer :: scf_diis_n_errmat, ccsd_diis_n_errmat, scf_maxiter, ccsd_maxiter
            character(40) :: calc_type
 
            integer :: ir, ierr
 
            ! Define namelist
-           namelist /elsinput/ calc_type, scf_e_tol, scf_d_tol, scf_diis_n_errmat, ccsd_e_tol, ccsd_t_tol, ccsd_diis_n_errmat
+           namelist /elsinput/ calc_type, scf_e_tol, scf_d_tol, scf_diis_n_errmat, ccsd_e_tol, ccsd_t_tol, ccsd_diis_n_errmat, &
+                               scf_maxiter, ccsd_maxiter
 
            ! Check if file exists
            inquire(file='dat/els.in', iostat=ierr)
@@ -85,6 +88,7 @@ module system
 
            sys%scf_e_tol = scf_e_tol; sys%scf_d_tol = scf_d_tol; sys%scf_diis_n_errmat = scf_diis_n_errmat
            sys%ccsd_e_tol = ccsd_e_tol; sys%ccsd_t_tol = ccsd_t_tol; sys%ccsd_diis_n_errmat = ccsd_diis_n_errmat
+           sys%scf_maxiter = scf_maxiter; sys%ccsd_maxiter = ccsd_maxiter
 
            select case(trim(calc_type))
                 case("RHF")

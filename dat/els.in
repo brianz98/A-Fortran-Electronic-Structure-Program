@@ -6,4 +6,6 @@ scf_diis_n_errmat=6,
 ccsd_e_tol=1e-6,
 ccsd_t_tol=1e-7,
 ccsd_diis_n_errmat=8
+scf_maxiter = 50,
+ccsd_maxiter = 50
 /

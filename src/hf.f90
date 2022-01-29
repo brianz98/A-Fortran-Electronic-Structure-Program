@@ -31,12 +31,11 @@ module hf
          real(p) :: density(sys%nbasis,sys%nbasis)
 
          type(state_t) :: st
-         integer :: iter, maxiter, iunit, i
+         integer :: iter, iunit, i
          logical :: conv = .false.
          type(diis_t) :: diis
 
          iunit = 6
-         maxiter = 100
          write(iunit, '(1X, 23("-"))')
          write(iunit, '(1X, A)') 'Restricted Hartree-Fock'
          write(iunit, '(1X, 23("-"))')
@@ -76,7 +75,7 @@ module hf
          ! Iterative SCF solver
          ! ####################
 
-         do iter = 1, maxiter
+         do iter = 1, sys%scf_maxiter
             ! F' is the fock matrix in orthogonal AO basis, where F is in the original non-orthogonal basis
             ! F' = X^T F X
             fockmat%ao_ort = matmul(transpose(ortmat), matmul(fockmat%ao, ortmat))
@@ -137,6 +136,7 @@ module hf
 
          integer :: i, j, ierr
 
+         if (diis%use_diis) then
          diis%iter = diis%iter+1
          if (diis%iter > diis%n_errmat) diis%iter = diis%iter - diis%n_errmat
          if (diis%n_active < diis%n_errmat) diis%n_active = diis%n_active+1
@@ -160,6 +160,8 @@ module hf
                   diis%B(i,j) = sum(diis%e(:,:,i)*diis%e(:,:,j))
                end do
             end do
+            do i = 1, n+1
+            end do
             call linsolve(diis%B, diis%c, ierr)
             if (ierr /= 0) call error('hf::update_diis', 'Linear solve failed!')
             fock = 0.0_p
@@ -168,6 +170,7 @@ module hf
             end do
          end if
          end associate
+         end if
       end subroutine update_diis
 
       subroutine init_diis_t(sys, diis)
@@ -191,7 +194,7 @@ module hf
       subroutine deallocate_diis_t(diis)
          type(diis_t), intent(inout) :: diis
 
-         deallocate(diis%e, diis%F, diis%B, diis%c, diis%rhs)
+         if (diis%use_diis) deallocate(diis%e, diis%F, diis%B, diis%c, diis%rhs)
       end subroutine deallocate_diis_t
 
       subroutine diagonalise(mat)

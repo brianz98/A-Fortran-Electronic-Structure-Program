@@ -34,23 +34,28 @@ module ccsd
       ! (https://doi.org/10.1016/0009-2614(86)80461-4)
 
       ! These are identical as the HF-SCF ones, other than that we store and use the T matrices, 
-      ! instead of Fock matrices for error matrix computation. Also that we don't store the error matrices as that will 
-      ! double the memory usage in what is a fast step (compared to updating amplitudes) anyway. Instead we use the idx lookup array
-      ! to make sure we take the right differences in computing e_i matrices on the fly.
-      !
-      ! In more detail, as e_i = T_i+1 - T_i, and we overwrite T1 when T8 is the newest T matrix, we must make sure we never 
-      ! subtract the newest T matrix with the oldest T matrix, and since doing that is tricky in a loop we keep the idx lookup array
+      ! instead of Fock matrices for error matrix computation. 
+      ! The details of the update is slightly subtle and quite easy to get wrong:
+      ! Diagrammatically, 
+      ! MP1 amp   (T0')-------> T1 ====> T1' 
+      !                amp. eqs.   DIIS
+      !             T1'-------> T2 ====> T2'
+      !             T2'-------> T3 ====> T3'
+      ! and so on. 
+      ! The error matrices are defined: e_i = T_i - T_{i-1}'
+      ! and the linear combination is over the unprimed amplitudes.
+      ! This means we **have to** store both the unprimed amplitudes and the error matrices, plus two temporary arrays
+      ! to compute the error matrix at each iteration
 
       logical :: use_diis = .true.
       integer :: n_errmat = 8
       integer :: n_active = 0
       integer :: iter = 0
-      real(p), allocatable :: t1(:,:,:)
-      real(p), allocatable :: t2(:,:,:,:,:)
+      real(p), dimension(:,:,:), allocatable :: t1, e1, t1_s(:,:)
+      real(p), dimension(:,:,:,:,:), allocatable :: t2, e2, t2_s(:,:,:,:)
       real(p), allocatable :: B(:,:)
       real(p), allocatable :: c(:)
       real(p), allocatable :: rhs(:)
-      integer, allocatable :: idx(:,:)
    end type diis_cc_t
    
    contains
@@ -77,7 +82,7 @@ module ccsd
          type(cc_amp_t) :: cc_amp
          integer :: ierr, iter
          integer, parameter :: iunit = 6
-         integer, parameter :: maxiter = 100
+         integer, parameter :: maxiter = 20
 
          type(cc_int_t) :: cc_int
          logical :: conv
@@ -209,7 +214,13 @@ module ccsd
          ! Iterative CC solver
          ! ###################
          associate(nbasis=>sys%nbasis, nocc=>sys%nocc, t_ia=>cc_amp%t_ia, t_ijab=>cc_amp%t_ijab)
-         do iter = 1, maxiter
+         do iter = 1, sys%ccsd_maxiter
+            if (diis%use_diis) then
+               ! These are for computing the error matrices for DIIS procedure
+               diis%t1_s = cc_amp%t_ia
+               diis%t2_s = cc_amp%t_ijab
+            end if
+
             ! Update intermediate tensors
             call build_tau(sys, cc_amp, cc_int)
             call build_F(sys, cc_int, cc_amp)
@@ -218,10 +229,12 @@ module ccsd
             ! CC amplitude equations
             call update_amplitudes(sys, cc_amp, int_store, cc_int)
             call update_cc_energy(sys, st, cc_int, cc_amp, conv)
-            
+            call system_clock(t1)
+            write(iunit, '(1X, A, 1X, I2, 2X, F15.12, 2X, F8.6, 1X, A)') 'Iteration',iter,st%energy,real(t1-t0, kind=dp)/c_rate,'s'
+            t0=t1
             if (conv) then
                write(iunit, '(1X, A)') 'Convergence reached within tolerance.'
-               write(iunit, '(1X, A, 1X, F15.8)') 'Final CCSD Energy (Hartree):', st%energy
+               write(iunit, '(1X, A, 1X, F15.12)') 'Final CCSD Energy (Hartree):', st%energy
 
                ! Copied for return 
                sys%e_ccsd = st%energy
@@ -230,10 +243,6 @@ module ccsd
                exit
             end if
             call update_diis_cc(diis, cc_amp)
-
-            call system_clock(t1)
-            write(iunit, '(1X, A, 1X, I2, 2X, F10.7, 2X, F8.6, 1X, A)') 'Iteration', iter, st%energy,real(t1-t0, kind=dp)/c_rate,'s'
-            t0=t1
          end do
          end associate
 
@@ -518,15 +527,22 @@ module ccsd
             ! Switch off diis
             diis%use_diis = .false.
          else
-            allocate(diis%idx(diis%n_errmat-1,2), source=0)
-
             diis%iter = 0; diis%n_active = 0
 
             associate(nvirt=>sys%nvirt, nocc=>sys%nocc)
                allocate(diis%t1(nocc,nvirt,diis%n_errmat), source=0.0_p, stat=ierr)
                call check_allocate('diis%t1', diis%n_errmat*nocc*nvirt, ierr)
+               allocate(diis%e1, source=diis%t1, stat=ierr)
+               call check_allocate('diis%e1', diis%n_errmat*nocc*nvirt, ierr)
+               allocate(diis%t1_s(nocc,nvirt), source=0.0_p, stat=ierr)
+               call check_allocate('diis%t1_s', nocc*nvirt, ierr)
+
                allocate(diis%t2(nocc,nocc,nvirt,nvirt,diis%n_errmat), source=0.0_p, stat=ierr)
-               call check_allocate('diis%t1', diis%n_errmat*(nocc*nvirt)**2, ierr)
+               call check_allocate('diis%t2', diis%n_errmat*(nocc*nvirt)**2, ierr)
+               allocate(diis%e2(nocc,nocc,nvirt,nvirt,diis%n_errmat), source=diis%t2, stat=ierr)
+               call check_allocate('diis%e2', diis%n_errmat*(nocc*nvirt)**2, ierr)
+               allocate(diis%t2_s(nocc,nocc,nvirt,nvirt), source=0.0_p, stat=ierr)
+               call check_allocate('diis%t2_s', diis%n_errmat*(nocc*nvirt)**2, ierr)
             end associate
          end if
       end subroutine init_diis_cc_t
@@ -545,65 +561,51 @@ module ccsd
 
          integer :: i, j, ierr
 
+         associate(n=>diis%n_active, nerr=>diis%n_errmat, it=>diis%iter)
          if (diis%use_diis) then
-         ! Increment counter
-         diis%iter = diis%iter+1
-         ! A modulo behaviour, but makes sure we never get iter = 0
-         if (diis%iter > diis%n_errmat) diis%iter = diis%iter - diis%n_errmat
-         ! In the first few iterations we need to make sure we don't accidentally access the empty arrays
-         if (diis%n_active < diis%n_errmat) diis%n_active = diis%n_active+1
-         ! Store the current amplitudes
-         diis%t1(:,:,diis%iter) = cc_amp%t_ia
-         diis%t2(:,:,:,:,diis%iter) = cc_amp%t_ijab
+            diis%iter = diis%iter+1
+            ! A modulo behaviour, but makes sure we never get iter = 0
+            if (diis%iter > diis%n_errmat) diis%iter = diis%iter - diis%n_errmat
 
-         associate(n=>diis%n_active, nerr=>diis%n_errmat, it=>diis%iter, idx=>diis%idx)
-         if (n > 2) then
-            ! We need at least three CC iterations to have at least two error matrices
+            ! In the first few iterations we need to make sure we don't accidentally access the empty arrays
+            if (diis%n_active < diis%n_errmat) diis%n_active = diis%n_active+1
 
-            ! Construct index list (idx), see diis_cc_t documentation for motivation
-            ! Concrete example, say n_errmat=8, and we're at iteration 4 (overwriting the 4th T matrices), so the error matrices
-            ! should be: 
-            ! e_1 = T4-T3 (== 4-3), e_2=3-2, e_3=2-1, e_4=1-8, e_5=8-7, e_6=7-6, e_7=6-5
-            ! So our idx array should look like
-            ! 4 3 2 1 8 7 6
-            ! 3 2 1 8 7 6 5
-            ! (note that the code below gives something like this but with the columns swapped around but that's ok 
-            ! since we don't care about chronological ordering)
-            do i = 1, n-1
-               idx(i,1) = it + 1 - i
-               if (idx(i,1) < 1) idx(i,1) = idx(i,1) + n
-               idx(i,2) = it - i
-               if (idx(i,2) < 1) idx(i,2) = idx(i,2) + n
-            end do
+            ! Store the current amplitudes
+            diis%t1(:,:,diis%iter) = cc_amp%t_ia
+            diis%t2(:,:,:,:,diis%iter) = cc_amp%t_ijab
+
+            ! Calculate error matrices for the current iteration
+            diis%e1(:,:,diis%iter) = cc_amp%t_ia - diis%t1_s
+            diis%e2(:,:,:,:,diis%iter) = cc_amp%t_ijab - diis%t2_s
+
             ! Construct the B matrix
             if (n <= nerr) then
                if (allocated(diis%B)) deallocate(diis%B, diis%c, diis%rhs)
-               allocate(diis%B(n,n), diis%c(n), diis%rhs(n), source=0.0_p)
+               allocate(diis%B(n+1,n+1), diis%c(n+1), diis%rhs(n+1), source=0.0_p)
             end if
-            diis%B(n,:) = -1.0_p
-            diis%B(n,n) = 0.0_p
-            diis%rhs(n) = -1.0_p
+            diis%B(n+1,:) = -1.0_p
+            diis%B(n+1,n+1) = 0.0_p
+            diis%rhs(n+1) = -1.0_p
             diis%c = diis%rhs
-            do i = 1, n-1
+            do i = 1, n
                do j = 1, i
-                  ! We compute the error matrices on the fly, linsolve/dsysv only need the upper triangle
-                  diis%B(i,j) = sum((diis%t1(:,:,idx(i,1))-diis%t1(:,:,idx(i,2)))*(diis%t1(:,:,idx(j,1))-diis%t1(:,:,idx(j,2)))) &
-                  + sum((diis%t2(:,:,:,:,idx(i,1))-diis%t2(:,:,:,:,idx(i,2)))*(diis%t2(:,:,:,:,idx(j,1))-diis%t2(:,:,:,:,idx(j,2))))
+                  ! We compute the error matrices on the fly, linsolve/dsysv only need the lower triangle
+                  ! Because of how the idx array works, c1 corresponds to the weightage of the newest error vector, and so on.
+                  diis%B(i,j) = sum(diis%e1(:,:,i)*diis%e1(:,:,j)) + sum(diis%e2(:,:,:,:,i)*diis%e2(:,:,:,:,j))
                end do
             end do
+
             call linsolve(diis%B, diis%c, ierr)
             if (ierr /= 0) call error('ccsd::update_diis_cc', 'Linear solve failed!')
+
             cc_amp%t_ia = 0.0_p
             cc_amp%t_ijab = 0.0_p
-            do i = 1, n-1
-               cc_amp%t_ia = cc_amp%t_ia + diis%c(i) * diis%t1(:,:,idx(i,1))
-               cc_amp%t_ijab = cc_amp%t_ijab + diis%c(i) * diis%t2(:,:,:,:,idx(i,1))
+            do i = 1, n
+               cc_amp%t_ia = cc_amp%t_ia + diis%c(i) * diis%t1(:,:,i)
+               cc_amp%t_ijab = cc_amp%t_ijab + diis%c(i) * diis%t2(:,:,:,:,i)
             end do
          end if
          end associate
-         else
-            continue
-         end if
       end subroutine update_diis_cc
 
       subroutine deallocate_diis_cc_t(diis)
@@ -613,7 +615,7 @@ module ccsd
 
          type(diis_cc_t), intent(inout) :: diis
 
-         deallocate(diis%t1, diis%t2, diis%B, diis%c, diis%rhs)
+         deallocate(diis%t1, diis%t2, diis%B, diis%c, diis%rhs, diis%e1, diis%e2, diis%t1_s, diis%t2_s)
       end subroutine deallocate_diis_cc_t
 
       subroutine build_tau(sys, cc_amp, cc_int)
@@ -966,11 +968,11 @@ module ccsd
          conv = .false.
          st%energy_old = st%energy
          associate(nocc=>sys%nocc, nvirt=>sys%nvirt, oovv=>cc_int%oovv, t1=>cc_amp%t_ia, t2=>cc_amp%t_ijab)
+            ecc = 0.0_p
+            rmst2 = 0.0_p
             !$omp parallel default(none) &
             !$omp private(i,j,a,b) &
             !$omp shared(sys,st,cc_amp,ecc,rmst2,cc_int) 
-            ecc = 0.0_p
-            rmst2 = 0.0_p
             !$omp do schedule(static, 10) collapse(2) reduction(+:ecc,rmst2)
             do b = 1, nvirt
                do a = 1, nvirt
@@ -1017,10 +1019,10 @@ module ccsd
 
          associate(nbasis=>sys%nbasis, nocc=>sys%nocc, e=>sys%canon_levels_spinorb, t1=>sys%t1, t2=>sys%t2,&
                    asym=>int_store%asym_spinorb)
+         e_T = 0.0_p
          !$omp parallel default(none) &
          !$omp private(i, j, k, a, b, c, f, m, tmp_t3d, tmp_t3c, tmp_t3c_d, ierr) &
          !$omp shared(sys, int_store, e_T)
-         e_T = 0.0_p
          
          ! Declare heap-allocated arrays inside parallel region
          allocate(tmp_t3d(2*nocc+1:2*nbasis,2*nocc+1:2*nbasis,2*nocc+1:2*nbasis), source=0.0_p, stat=ierr)
