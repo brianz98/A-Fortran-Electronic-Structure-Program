@@ -30,6 +30,8 @@ module integrals
         real(p), allocatable :: eri(:)
         real(p), allocatable :: eri_mo(:)
         real(p), allocatable :: asym_spinorb(:,:,:,:)
+        ! needed for CCSD -> CCSD(T), spinorbital formulation
+        real(p), dimension(:,:,:,:), allocatable :: vvoo, vovv, ovoo
     end type int_store_t
     
     contains

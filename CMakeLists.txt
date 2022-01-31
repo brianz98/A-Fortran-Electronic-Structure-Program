@@ -7,7 +7,7 @@ project (els)
 enable_language (Fortran)
 
 if (CMAKE_Fortran_COMPILER_ID MATCHES "GNU")
-    set (dialect "-ffree-form -std=f2008 -fimplicit-none -fopenmp -O3")
+    set (dialect "-ffree-form -std=f2008 -fimplicit-none -fopenmp -O3 -ffast-math")
     set (extras "-fcheck=all -Wall -ggdb -O0")
 endif ()
 if (CMAKE_Fortran_COMPILER_ID MATCHES "Intel")

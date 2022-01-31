@@ -66,7 +66,7 @@ module ccsd
 
          use integrals, only: int_store_t, eri_ind
          use error_handling, only: error, check_allocate
-         use system, only: state_t
+         use system, only: state_t, CCSD_T_spinorb
 
          type(system_t), intent(inout) :: sys
          type(int_store_t), intent(inout) :: int_store
@@ -213,7 +213,7 @@ module ccsd
          ! ###################
          ! Iterative CC solver
          ! ###################
-         associate(nbasis=>sys%nbasis, nocc=>sys%nocc, t_ia=>cc_amp%t_ia, t_ijab=>cc_amp%t_ijab)
+         associate(nbasis=>sys%nbasis, nvirt=>sys%nvirt, nocc=>sys%nocc, t_ia=>cc_amp%t_ia, t_ijab=>cc_amp%t_ijab)
          do iter = 1, sys%ccsd_maxiter
             if (diis%use_diis) then
                ! These are for computing the error matrices for DIIS procedure
@@ -240,6 +240,17 @@ module ccsd
                sys%e_ccsd = st%energy
                call move_alloc(cc_amp%t_ia, sys%t1)
                call move_alloc(cc_amp%t_ijab, sys%t2)
+               if (sys%calc_type == CCSD_T_spinorb) then
+                  call move_alloc(cc_int%vovv, int_store%vovv)
+                  call move_alloc(cc_int%ovoo, int_store%ovoo)
+                  allocate(int_store%vvoo(nvirt,nvirt,nocc,nocc))
+                  int_store%vvoo = reshape(cc_int%oovv,shape(int_store%vvoo),order=(/3,4,1,2/))
+                  deallocate(cc_int%oooo, cc_int%ooov, cc_int%oovo, cc_int%oovv, cc_int%ovvo, cc_int%ovvv, &
+                     cc_int%vvvv)
+               else
+                  deallocate(cc_int%oooo, cc_int%ooov, cc_int%ovoo, cc_int%oovo, cc_int%oovv, cc_int%ovvo, cc_int%ovvv, &
+                     cc_int%vovv, cc_int%vvvv)
+               end if
                exit
             end if
             call update_diis_cc(diis, cc_amp)
@@ -1009,7 +1020,7 @@ module ccsd
          type(int_store_t), intent(in) :: int_store
 
          integer :: i, j, k, a, b, c, f, m, ierr
-         real(p), allocatable :: tmp_t3d(:,:,:), tmp_t3c(:,:,:), tmp_t3c_d(:,:,:)
+         real(p), dimension(:,:,:), allocatable :: tmp_t3d, tmp_t3c, tmp_t3c_d, reshape_tmp1, reshape_tmp2, t2_reshape(:,:,:,:)
          real(p) :: e_T
          integer, parameter :: iunit = 6
 
@@ -1017,61 +1028,76 @@ module ccsd
          write(iunit, '(1X, A)') 'CCSD(T)'
          write(iunit, '(1X, 10("-"))')
 
-         associate(nbasis=>sys%nbasis, nocc=>sys%nocc, e=>sys%canon_levels_spinorb, t1=>sys%t1, t2=>sys%t2,&
-                   asym=>int_store%asym_spinorb)
+         associate(nvirt=>sys%nvirt, nocc=>sys%nocc, e=>sys%canon_levels_spinorb, t1=>sys%t1, t2=>sys%t2,&
+                   vvoo=>int_store%vvoo,vovv=>int_store%vovv,ovoo=>int_store%ovoo)
+
+         ! For efficient cache access during tmp_t3c updates
+         allocate(t2_reshape(nvirt,nvirt,nocc,nocc), source=0.0_p, stat=ierr)
+         call check_allocate('t2_reshape', (nvirt*nocc)**2, ierr)
+         ! ijab -> baij
+         t2_reshape = reshape(t2, shape(t2_reshape), order=(/4,3,2,1/))
+
          e_T = 0.0_p
+
          !$omp parallel default(none) &
-         !$omp private(i, j, k, a, b, c, f, m, tmp_t3d, tmp_t3c, tmp_t3c_d, ierr) &
-         !$omp shared(sys, int_store, e_T)
+         !$omp private(tmp_t3d, tmp_t3c, tmp_t3c_d, ierr, reshape_tmp1, reshape_tmp2) &
+         !$omp shared(sys, int_store, t2_reshape) reduction(+:e_T)
          
          ! Declare heap-allocated arrays inside parallel region
-         allocate(tmp_t3d(2*nocc+1:2*nbasis,2*nocc+1:2*nbasis,2*nocc+1:2*nbasis), source=0.0_p, stat=ierr)
-         call check_allocate('tmp_t3d', 8*(nbasis-nocc)**3, ierr)
-         allocate(tmp_t3c(2*nocc+1:2*nbasis,2*nocc+1:2*nbasis,2*nocc+1:2*nbasis), source=0.0_p, stat=ierr)
-         call check_allocate('tmp_t3c', 8*(nbasis-nocc)**3, ierr)
-         allocate(tmp_t3c_d(2*nocc+1:2*nbasis,2*nocc+1:2*nbasis,2*nocc+1:2*nbasis), source=0.0_p, stat=ierr)
-         call check_allocate('tmp_t3c_d', 8*(nbasis-nocc)**3, ierr)
+         allocate(tmp_t3d(nvirt,nvirt,nvirt), source=0.0_p, stat=ierr)
+         call check_allocate('tmp_t3d', nvirt**3, ierr)
+         allocate(tmp_t3c(nvirt,nvirt,nvirt), source=0.0_p, stat=ierr)
+         call check_allocate('tmp_t3c', nvirt**3, ierr)
+         allocate(tmp_t3c_d(nvirt,nvirt,nvirt), source=0.0_p, stat=ierr)
+         call check_allocate('tmp_t3c_d', nvirt**3, ierr)
+         allocate(reshape_tmp1(nvirt,nvirt,nvirt), source=0.0_p, stat=ierr)
+         call check_allocate('reshape_tmp1', nvirt**3, ierr)
+         allocate(reshape_tmp2(nvirt,nvirt,nvirt), source=0.0_p, stat=ierr)
+         call check_allocate('reshape_tmp2', nvirt**3, ierr)
 
          ! We use avoid the storage of full triples (six-dimensional array..) and instead use the strategy of 
          ! batched triples storage, denoted W^{ijk}(abc) in (https://doi.org/10.1016/0009-2614(91)87003-T).
          ! We could of course only compute one element in a loop iteration but that will probably result in bad floating point
          ! performance, here for each thread/loop iteration we use the Fortran intrinsic sum, 
          ! instead of all relying on OMP reduction, to hopefully give better floating point performance.
-         !$omp do schedule(static, 10) collapse(3) reduction(+:e_T)
-         do i = 1, 2*nocc
-            do j = 1, 2*nocc
-               do k = 1, 2*nocc
-                  ! Compute T3 amplitudes                  
-                  do a = 2*nocc+1, 2*nbasis
-                     do b = 2*nocc+1, 2*nbasis
-                        do c = 2*nocc+1, 2*nbasis
+
+         ! P(i/jk)P(a/bc) = (1-jik-kji)(1-bac-cba)
+         !$omp do schedule(static, 10) collapse(3) 
+         do i = 1, nocc
+            do j = 1, nocc
+               do k = 1, nocc
+                  ! Compute T3 amplitudes
+                  do a = 1, nvirt
+                     do c = 1, nvirt
+                        do b = 1, nvirt
                            ! Disonnected T3: D_{ijk}^{abc}*t_{ijk}^{abc}(d) = P(i/jk)P(a/bc)t_i^a*<jk||bc>
                            ! Can be rewritten directly as no sums in the expression
-                           tmp_t3d(a,b,c) = - t1(i,a)*asym(c,b,j,k) + t1(j,a)*asym(c,b,i,k) + t1(k,a)*asym(c,b,j,i) &
-                                            + t1(i,b)*asym(c,a,j,k) - t1(j,b)*asym(c,a,i,k) - t1(k,b)*asym(c,a,j,i) &
-                                            - t1(i,c)*asym(j,k,b,a) + t1(j,c)*asym(i,k,b,a) + t1(k,c)*asym(j,i,b,a)
-                           tmp_t3d(a,b,c) = tmp_t3d(a,b,c)/(e(i)+e(j)+e(k)-e(a)-e(b)-e(c))               
+                           tmp_t3d(a,b,c) = (t1(i,a)*vvoo(b,c,j,k) - t1(j,a)*vvoo(b,c,i,k) - t1(k,a)*vvoo(b,c,j,i)) &
+                                             /(e(i)+e(j)+e(k)-e(a+nocc)-e(b+nocc)-e(c+nocc))
 
-                           ! Connected T3: D_{ijk}^{abc}*t_{ijk}^{abc}(c) = P(i/jk)P(a/bc)[\sum_f t_jk^af <fi||bc> - \sum_m t_im^bc <ma||jk>]
-                           ! Has to be zeroed as all terms are sums
-                           tmp_t3c(a,b,c) = 0.0_p
-                           do f = 2*nocc+1, 2*nbasis
-                              tmp_t3c(a,b,c) = tmp_t3c(a,b,c) &
-                                             + t2(k,j,f,a)*asym(f,i,b,c) - t2(k,i,f,a)*asym(f,j,b,c) - t2(i,j,f,a)*asym(f,k,b,c) &
-                                             - t2(k,j,f,b)*asym(f,i,a,c) + t2(k,i,f,b)*asym(f,j,a,c) + t2(i,j,f,b)*asym(f,k,a,c) &
-                                             - t2(k,j,f,c)*asym(f,i,b,a) + t2(k,i,f,c)*asym(f,j,b,a) + t2(i,j,f,c)*asym(f,k,b,a)
-                           end do
-                           do m = 1, 2*nocc
-                              tmp_t3c(a,b,c) = tmp_t3c(a,b,c) &
-                                             - t2(m,i,c,b)*asym(m,a,j,k) + t2(m,j,c,b)*asym(m,a,i,k) + t2(m,k,c,b)*asym(m,a,j,i) &
-                                             + t2(m,i,c,a)*asym(m,b,j,k) - t2(m,j,c,a)*asym(m,b,i,k) - t2(m,k,c,a)*asym(m,b,j,i) &
-                                             + t2(m,i,a,b)*asym(m,c,j,k) - t2(m,j,a,b)*asym(m,c,i,k) - t2(m,k,a,b)*asym(m,c,j,i)
-                           end do
-                           tmp_t3c_d(a,b,c) = tmp_t3c(a,b,c)/(e(i)+e(j)+e(k)-e(a)-e(b)-e(c))
+                           ! Connected T3: D_{ijk}^{abc}*t_{ijk}^{abc}(c) = 
+                           !        P(i/jk)P(a/bc)[\sum_f t_jk^af <fi||bc> - \sum_m t_im^bc <ma||jk>]
+                           tmp_t3c(a,b,c) = sum(vovv(:,i,b,c)*t2_reshape(:,a,k,j)) - sum(vovv(:,j,b,c)*t2_reshape(:,a,k,i)) &
+                                          - sum(vovv(:,k,b,c)*t2_reshape(:,a,i,j)) &
+                              - sum(t2(:,i,c,b)*ovoo(:,a,j,k)) + sum(t2(:,j,c,b)*ovoo(:,a,i,k)) + sum(t2(:,k,c,b)*ovoo(:,a,j,i))
+                           
+                           tmp_t3c_d(a,b,c) = tmp_t3c(a,b,c)/(e(i)+e(j)+e(k)-e(a+nocc)-e(b+nocc)-e(c+nocc))
                         end do
                      end do
                   end do
+                  ! Do reshapes
+                  reshape_tmp1 = reshape(tmp_t3d, shape(reshape_tmp1), order=(/2,1,3/))
+                  reshape_tmp2 = reshape(tmp_t3d, shape(reshape_tmp1), order=(/3,2,1/))
+                  tmp_t3d = tmp_t3d - reshape_tmp1 - reshape_tmp2
                   
+                  reshape_tmp1 = reshape(tmp_t3c, shape(reshape_tmp1), order=(/2,1,3/))
+                  reshape_tmp2 = reshape(tmp_t3c, shape(reshape_tmp1), order=(/3,2,1/))
+                  tmp_t3c = tmp_t3c - reshape_tmp1 - reshape_tmp2
+
+                  reshape_tmp1 = reshape(tmp_t3c_d, shape(reshape_tmp1), order=(/2,1,3/))
+                  reshape_tmp2 = reshape(tmp_t3c_d, shape(reshape_tmp1), order=(/3,2,1/))
+                  tmp_t3c_d = tmp_t3c_d - reshape_tmp1 - reshape_tmp2
+
                   ! Calculate contributions
                   e_T = e_T + sum(tmp_t3c*(tmp_t3c_d+tmp_t3d))/36
                end do

@@ -1,5 +1,5 @@
 &elsinput
-calc_type="CCSD_spinorb",
+calc_type="CCSD(T)_spinorb",
 scf_e_tol=1e-6,
 scf_d_tol=1e-7,
 scf_diis_n_errmat=6,
