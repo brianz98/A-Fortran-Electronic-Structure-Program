@@ -55,14 +55,16 @@ module linalg
 
       end subroutine linsolve
 
-      subroutine dgemm_wrapper(transA, transB, outer_row, outer_col, inner_dim, A, B, C)
+      subroutine dgemm_wrapper(transA, transB, outer_row, outer_col, inner_dim, A, B, C, alpha, beta)
          ! Wraps around dgemm with fewer arguments
 
          character(1), intent(in) :: transA, transB
          integer, intent(in) :: outer_row, outer_col, inner_dim
          real(p), intent(in) :: A(*), B(*)
+         real(p), optional, intent(in) :: alpha, beta
          real(p), intent(inout) :: C(*)
          integer :: LDA, LDB
+         real(p) :: alpha_loc, beta_loc
 
          if (transA == 'T') then
             LDA = inner_dim
@@ -75,9 +77,15 @@ module linalg
          else
             LDB = inner_dim
          end if
+
+         alpha_loc = 1.0_p
+         if (present(alpha)) alpha_loc = alpha
+
+         beta_loc = 0.0_p
+         if (present(beta)) beta_loc = beta
          
-         call dgemm(transA, transB, outer_row, outer_col, inner_dim, 1.0_dp, &
-                    A, LDA, B, LDB, 0.0_dp, C, outer_row)
+         call dgemm(transA, transB, outer_row, outer_col, inner_dim, alpha_loc, &
+                    A, LDA, B, LDB, beta_loc, C, outer_row)
       end subroutine dgemm_wrapper
 
       elemental subroutine zero_mat(matel)

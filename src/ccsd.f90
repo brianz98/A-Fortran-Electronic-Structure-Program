@@ -963,6 +963,110 @@ module ccsd
 
       end subroutine update_amplitudes
 
+      subroutine update_restricted_intermediates(sys, cc_amp, cc_int)
+         ! Build the "recursively generated" intermediates defined in Piecuch et al Table 1.
+
+         type(system_t), intent(in) :: sys
+         type(cc_amp_t), intent(in) :: cc_amp
+         type(cc_int_t), intent(inout) :: cc_int
+
+         integer :: i, j, a, b
+         real(dp), dimension(:,:,:,:) :: reshape_tmp, scratch
+
+         associate(tmp_t1=>cc_int%tmp_tia,tmp_t2=>cc_int%tmp_tijab,t1=>cc_amp%t_ia,t2=>cc_amp%t_ijab, &
+            D_ia=>cc_int%D_ia,D_ijab=>cc_int%D_ijab, nocc=>sys%nocc, nvirt=>sys%nvirt, nbasis=>sys%nbasis, &
+            I_vv=>cc_int%I_vv, I_oo=>cc_int%I_oo, I_vo=>cc_int%I_vo, I_oo_p=>cc_int%I_oo_p, &
+            I_oooo=>cc_int%I_oooo, I_ovov=>cc_int%I_ovov, I_voov=>cc_int%I_voov, &
+            I_vovv_p=>cc_int%I_vovv_p, I_ooov_p=>cc_int%I_ooov_p, &
+            v_oovv=>cc_int%v_oovv, v_vovo=>cc_int%v_vovo, v_vovv=>cc_int%v_vovv, v_vvvv=>cc_int%v_vvvv, v_oooo=>cc_int%v_oooo, &
+            v_oovo=>cc_int%v_oovo, asym_t2=>cc_int%asym_t2, c_oovv=>cc_int%c_oovv, x_voov=>cc_int%x_voov)
+
+         ! ----------------------------------------------------------------
+         ! c_ijab = t_ijab + t_ia t_jb
+         c_oovv = t2
+         !$omp parallel default(none) shared(sys, cc_amp, cc_int) 
+
+         !$omp do collapse(2) schedule(static, 10)
+         do b = 1, nvirt
+            do a = 1, nvirt
+               do j = 1, nocc
+                  do i = 1, nocc
+                     c_oovv(i,j,a,b) = c_oovv(i,j,a,b) + t1(i,a)*t1(j,b)
+                  end do
+               end do
+            end do
+         end do
+         !$omp end do
+
+         ! ----------------------------------------------------------------
+         ! I_ai = (2 v_aeim - v_eaim) t_me
+         ! ## Cache optimisation:
+         !  v_aeim = <im|ae> = <ae|im> = <ea|mi> = v_oovv(m,i,e,a)
+         !$omp do collapse(2) schedule(static, 10)
+         do i = 1, nocc
+            do a = 1, nvirt
+               I_vo(a,i) = sum((2*v_oovv(:,i,:,a) - v_oovv(:,i,a,:))*t1(:,:))
+            end do 
+         end do
+         !$omp end do
+
+         ! ----------------------------------------------------------------
+         ! I_ba = (2 v_beam - v_bema) t_me - (2 v_ebmn - v_bemn) c_mnea
+         ! ## Cache optimisation:
+         !  v_beam = <am|be> = <be|am> = v_vovv(a,m,b,e)
+         !  v_ebmn = <mn|eb> = v_oovv(m,n,e,b), v_bemn = v_oovv(m,n,b,e)
+         !$omp do collapse(2) schedule(static, 10)
+         do a = 1, nvirt
+            do b = 1, nvirt
+               I_vo(b,a) = sum((2*v_vovv(a,:,b,:) - v_vovv(:,a,b,:)))*t1(:,:)) &
+                         - sum((2*v_oovv(:,:,:,b) - v_oovv(:,:,b,:))*c_oovv(:,:,:,a))
+            end do 
+         end do
+         !$omp end do
+
+         ! ----------------------------------------------------------------
+         ! I_ji' = (2 v_jeim - 2 v_ejim) t_me + (v_efmi - v_efim) t_mjef
+         ! ## Cache optimisation:
+         !  v_jeim = <mi|ej> = v_oovo(m,i,e,j), v_ejim = v_oovo(i,m,e,j)
+         !  v_efmi = v_oovv(m,i,e,f), v_efim = v_oovv(m,i,f,e)
+         !  to align the indices the second term has to be broken into two sums, and t_mjef = t_jmfe is used
+         !$omp do collapse(2) schedule(static, 10)
+         do i = 1, nocc
+            do j = 1, nocc
+               I_oo_p(j,i) = sum((2*v_oovv(:,i,:,j) - v_oovv(i,:,:,j)))*t1(:,:)) &
+                         - sum(v_oovv(:,i,:,:)*t2(:,j,:,:)) + sum(v_oovv(:,i,:,:)*t2(j,:,:,:))
+            end do 
+         end do
+         !$omp end do
+
+         ! ----------------------------------------------------------------
+         ! I_ji = I_ji' + I_ei t_je
+         ! When it gets big of course we can use dgemm
+         ! [todo]: conditional switches?
+         I_oo = I_oo_p + matmul(t1, I_vo)
+
+         ! ----------------------------------------------------------------
+         ! I_klij = v_klij + v_ejif c_klef + P(ik/jl) t_ke v_elij
+         !     v_ejif <= reshape v_oovv(i,j,e,f) into efji then we have a dgemm
+         !     v_elij <= reshape v_ovoo(l,e,j,i) into elij
+         allocate(reshape_tmp(nvirt, nvirt, nocc, nocc))
+         reshape_tmp = reshape(v_oovv, shape(reshape_tmp), order=(/4,3,1,2/))
+         call dgemm_wrapper('N','N',nocc**2,nocc**2,nvirt**2,c_oovv,reshape_tmp,I_oooo,beta=1.0_dp)
+         deallocate(reshape_tmp)
+         allocate(reshape_tmp(nvirt,nocc,nocc,nocc))
+         reshape_tmp = reshape(v_ovoo, shape(reshape_tmp), order=(/2,1,4,3/))
+         allocate(scratch(nocc,nocc,nocc,nocc))
+         call dgemm_wrapper('N','N',nocc,nocc**3,nvirt,t1,reshape_tmp,scratch)
+         deallocate(reshape_tmp)
+         allocate(reshape_tmp(nocc,nocc,nocc,nocc))
+         reshape_tmp = reshape(scratch, shape(reshape_tmp), order=(/2,1,4,3/))
+         I_oooo = I_oooo + scratch + reshape_tmp
+         deallocate(reshape_tmp) 
+
+         end associate
+
+      end subroutine update_restricted_intermediates
+
       subroutine update_amplitudes_restricted(sys, cc_amp, int_store, cc_int)
          ! Perform the CC amplitude equations for the spin-free formulation
          ! In:
