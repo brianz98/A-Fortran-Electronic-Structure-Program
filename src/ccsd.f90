@@ -761,8 +761,7 @@ module ccsd
          ! 1/2 tau_ijef <mn||ef>
          allocate(reshape_scratch(nvirt,nvirt,nocc,nocc))
          reshape_scratch = reshape(tau, shape(reshape_scratch), order=(/3,4,1,2/))
-         call dgemm_wrapper('N','N',nocc**2,nocc**2,nvirt**2,cc_int%oovv,reshape_scratch,scratch)
-         W_oooo = W_oooo + scratch/2
+         call dgemm_wrapper('N','N',nocc**2,nocc**2,nvirt**2,cc_int%oovv,reshape_scratch,W_oooo,0.5_dp,1.0_dp)
          deallocate(reshape_scratch)
 
          ! We reshape it to W_ijmn to make contractions more amenable to dgemm
@@ -790,11 +789,11 @@ module ccsd
          ! Eq. (8): W_mbej = <mb||ej> + t_jf<mb||ef> - t_nb<mn||ej> - (1/2 t_jnfb + t_jf t_nb)<mn||ef>
          ! #########################################################################################################################
          ! <mb||ej> + t_jf<mb||ef>
-         allocate(scratch, reshape_scratch, mold=W_ovvo)
-         call dgemm_wrapper('N','T',nocc*nvirt**2,nocc,nvirt,cc_int%ovvv,t1,scratch)
-         W_ovvo = cc_int%ovvo + scratch
+         call dgemm_wrapper('N','T',nocc*nvirt**2,nocc,nvirt,cc_int%ovvv,t1,W_ovvo)
+         W_ovvo = W_ovvo + cc_int%ovvo
 
          ! - t_nb<mn||ej> = +(t_bn)^T<nm||ej>
+         allocate(scratch, reshape_scratch, mold=W_ovvo)
          call dgemm_wrapper('T','N',nvirt,nocc**2*nvirt,nocc,t1,cc_int%oovo,scratch)
          ! We need to reshape it because currently the scratch tensor is b,m,e,j
          reshape_scratch = reshape(scratch,shape(reshape_scratch),order=(/2,1,3,4/))
@@ -939,11 +938,9 @@ module ccsd
          reshape_tmp = reshape(tmp_t2_s,shape(reshape_tmp),order=(/2,1,3,4/))
          tmp_t2 = tmp_t2 - tmp_t2_s + reshape_tmp
          ! + 1/2 tau_mnab W_mnij, but remember out W_mnij is reshaped as W_ijmn
-         call dgemm_wrapper('N','N',nocc**2,nvirt**2,nocc**2,W_oooo,tau,tmp_t2_s)
-         tmp_t2 = tmp_t2 + tmp_t2_s/2
+         call dgemm_wrapper('N','N',nocc**2,nvirt**2,nocc**2,W_oooo,tau,tmp_t2, 0.5_dp, 1.0_dp)
          ! + 1/2 tau_ijef W_abef
-         call dgemm_wrapper('N','N',nocc**2,nvirt**2,nvirt**2,tau,W_vvvv,tmp_t2_s)
-         tmp_t2 = tmp_t2 + tmp_t2_s/2
+         call dgemm_wrapper('N','N',nocc**2,nvirt**2,nvirt**2,tau,W_vvvv,tmp_t2, 0.5_dp, 1.0_dp)
          deallocate(tmp_t2_s, reshape_tmp)
 
          t1 = tmp_t1
