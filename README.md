@@ -17,6 +17,8 @@ The end goal of this project will be performing HF, MP2, CCSD, and CCSD(T), as p
 - [X] Loop optimisations - cache
 - [X] User input file: level of theory, tolerances
 - [X] BLAS acceleration of tensor contractions
+- [ ] Spin-free CCSD
+- [ ] Spin-free CCSD(T)
 - [ ] Loop optimisations - using permutational symmetry
 - [ ] Adapting Hartree-Fock with symmetry
 - [ ] Ditto for MP2
