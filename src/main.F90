@@ -55,21 +55,21 @@ program main
         call do_mp2_spatial(sys, int_store)
         call system_clock(t1)
         if (t1<t0) t1 = t1+count_max
-        write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for UMP2:', real(t1-t0)/count_rate, "s"
+        write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for restricted MP2:', real(t1-t0)/count_rate, "s"
         t0=t1
         
         if (any((/ct==CCSD_spinorb, ct==CCSD_T_spinorb/))) then
             call do_ccsd_spinorb(sys, int_store)
             call system_clock(t1)
             if (t1<t0) t1 = t1+count_max
-            write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for UCCSD:', real(t1-t0)/count_rate, "s"
+            write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for unrestricted CCSD:', real(t1-t0)/count_rate, "s"
             t0=t1
 
             if (ct==CCSD_T_spinorb) then
                 call do_ccsd_t_spinorb(sys, int_store)
                 call system_clock(t1)
                 if (t1<t0) t1 = t1+count_max
-                write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for UCCSD(T):', real(t1-t0)/count_rate, "s"
+                write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for unrestricted CCSD(T):', real(t1-t0)/count_rate, "s"
                 t0=t1
             end if
         end if
@@ -85,21 +85,21 @@ program main
         call do_mp2_spatial(sys, int_store)
         call system_clock(t1)
         if (t1<t0) t1 = t1+count_max
-        write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for RMP2:', real(t1-t0)/count_rate, "s"
+        write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for restricted MP2:', real(t1-t0)/count_rate, "s"
         t0=t1
         
         if (any((/ct==CCSD_spatial, ct==CCSD_T_spatial/))) then
             call do_ccsd_spatial(sys, int_store)
             call system_clock(t1)
             if (t1<t0) t1 = t1+count_max
-            write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for RCCSD:', real(t1-t0)/count_rate, "s"
+            write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for restricted CCSD:', real(t1-t0)/count_rate, "s"
             t0=t1
 
             if (ct==CCSD_T_spatial) then
                 call do_ccsd_t_spatial(sys, int_store)
                 call system_clock(t1)
                 if (t1<t0) t1 = t1+count_max
-                write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for RCCSD(T):', real(t1-t0)/count_rate, "s"
+                write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for restricted CCSD(T):', real(t1-t0)/count_rate, "s"
                 t0=t1
             end if
         end if
