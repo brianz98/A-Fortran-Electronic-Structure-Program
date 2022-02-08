@@ -966,12 +966,14 @@ module ccsd
       subroutine update_restricted_intermediates(sys, cc_amp, cc_int)
          ! Build the "recursively generated" intermediates defined in Piecuch et al Table 1.
 
+         use linalg, only: dgemm_wrapper
+
          type(system_t), intent(in) :: sys
          type(cc_amp_t), intent(in) :: cc_amp
          type(cc_int_t), intent(inout) :: cc_int
 
-         integer :: i, j, a, b
-         real(dp), dimension(:,:,:,:) :: reshape_tmp, scratch
+         integer :: i, j, a, b, c, e
+         real(dp), allocatable, dimension(:,:,:,:) :: reshape_tmp, scratch
 
          associate(tmp_t1=>cc_int%tmp_tia,tmp_t2=>cc_int%tmp_tijab,t1=>cc_amp%t_ia,t2=>cc_amp%t_ijab, &
             D_ia=>cc_int%D_ia,D_ijab=>cc_int%D_ijab, nocc=>sys%nocc, nvirt=>sys%nvirt, nbasis=>sys%nbasis, &
@@ -1013,12 +1015,12 @@ module ccsd
          ! ----------------------------------------------------------------
          ! I_ba = (2 v_beam - v_bema) t_me - (2 v_ebmn - v_bemn) c_mnea
          ! ## Cache optimisation:
-         !  v_beam = <am|be> = <be|am> = v_vovv(a,m,b,e)
+         !  v_beam = v_vvov(e,b,m,a)
          !  v_ebmn = <mn|eb> = v_oovv(m,n,e,b), v_bemn = v_oovv(m,n,b,e)
          !$omp do collapse(2) schedule(static, 10)
          do a = 1, nvirt
             do b = 1, nvirt
-               I_vo(b,a) = sum((2*v_vovv(a,:,b,:) - v_vovv(:,a,b,:)))*t1(:,:)) &
+               I_vo(b,a) = sum((2*v_vvov(:,b,:,a) - v_vvov(:,b,a,:))*transpose(t1)) &
                          - sum((2*v_oovv(:,:,:,b) - v_oovv(:,:,b,:))*c_oovv(:,:,:,a))
             end do 
          end do
@@ -1033,7 +1035,7 @@ module ccsd
          !$omp do collapse(2) schedule(static, 10)
          do i = 1, nocc
             do j = 1, nocc
-               I_oo_p(j,i) = sum((2*v_oovo(:,i,:,j) - v_oovo(i,:,:,j)))*t1(:,:)) &
+               I_oo_p(j,i) = sum((2*v_oovo(:,i,:,j) - v_oovo(i,:,:,j))*t1) &
                          - sum(v_oovv(:,i,:,:)*t2(:,j,:,:)) + sum(v_oovv(:,i,:,:)*t2(j,:,:,:))
             end do 
          end do
@@ -1050,13 +1052,13 @@ module ccsd
          ! ----------------------------------------------------------------
          ! I_klij = v_klij + v_ejif c_klef + P(ik/jl) t_ke v_elij
          !     v_ejif <= reshape v_oovv(i,j,e,f) into efji then we have a dgemm
-         !     v_elij <= reshape v_ovoo(l,e,j,i) into elij
+         !     v_elij <= reshape v_oovo(i,l,e,j) into elij
          allocate(reshape_tmp(nvirt, nvirt, nocc, nocc))
          reshape_tmp = reshape(v_oovv, shape(reshape_tmp), order=(/4,3,1,2/))
          call dgemm_wrapper('N','N',nocc**2,nocc**2,nvirt**2,c_oovv,reshape_tmp,I_oooo,beta=1.0_dp)
          deallocate(reshape_tmp)
          allocate(reshape_tmp(nvirt,nocc,nocc,nocc))
-         reshape_tmp = reshape(v_ovoo, shape(reshape_tmp), order=(/2,1,4,3/))
+         reshape_tmp = reshape(v_oovo, shape(reshape_tmp), order=(/3,2,1,4/))
          allocate(scratch(nocc,nocc,nocc,nocc))
          call dgemm_wrapper('N','N',nocc,nocc**3,nvirt,t1,reshape_tmp,scratch)
          deallocate(reshape_tmp)
@@ -1080,7 +1082,7 @@ module ccsd
             do i = 1, nocc
                do b = 1, nvirt
                   do j = 1, nvirt
-                     I(j,b,i,a) = I(j,b,i,a) - 0.5*sum(v_oovv(:,i,b,:)*c_oovv(j,:,:,a))
+                     I_ovov(j,b,i,a) = I_ovov(j,b,i,a) - 0.5*sum(v_oovv(:,i,b,:)*c_oovv(j,:,:,a))
                   end do
                end do
             end do 
@@ -1113,6 +1115,62 @@ module ccsd
          !$omp end do
 
          !$omp end parallel
+
+         ! ----------------------------------------------------------------
+         ! I_bjia = v_bjia + v_beim t_mjea - 0.5 v_mbie t_jmae - 0.5 v_beim c_mjae + v_beia t_je - v_bjim t_ma
+         ! v_bjia = v_voov(b,j,i,a) = v_oovv(i,j,b,a) reshape needed
+         ! v_beim = v_oovv(m,i,e,b)
+         ! v_mbie = v_ovov(m,e,i,b), both contracted indices in front
+         ! v_beia = v_vvov(b,e,i,a), can't really help
+         ! v_jbim t_ma = v_oovv(m,i,b,j) * t1(m,a) (contracted indices at the front)
+         I_voov = reshape(v_oovv, shape(I_voov), order=(/3,2,1,4/))
+
+         !$omp parallel default(none) shared(sys, cc_amp, cc_int) 
+
+         !$omp do collapse(2) schedule(static, 10)
+         do a = 1, nvirt
+            do i = 1, nocc
+               do b = 1, nvirt
+                  do j = 1, nocc
+                     I_voov(b,j,i,a) = I_voov(b,j,i,a) + sum(v_oovv(:,i,:,b)*(t2(:,j,:,a)-0.5*c_oovv(:,j,a,:))) - &
+                     0.5*sum(v_ovov(:,:,i,b)*t2(:,j,:,a)) + sum(v_vvov(b,:,i,a)*t1(j,:)) - sum(v_oovv(:,i,b,j)*t1(:,a))
+                  end do
+               end do
+            end do
+         end do
+         !$omp end do
+
+         !$omp end parallel
+
+         ! ----------------------------------------------------------------
+         ! I_ciab' = v_ciab - v_ciam t_mb - t_ma v_cimb
+         ! v_ciab = v_vovv = v_vvov(b,a,i,c)
+         ! v_ciam = v_vovo = v_ovov(m,a,i,c)
+         ! v_cimb = v_voov = v_oovv(m,i,c,b)
+
+         do b = 1, nvirt
+            do a = 1, nvirt
+               do i = 1, nocc
+                  do c = 1, nvirt
+                     I_vovv_p(c,i,a,b) = I_vovv_p(c,i,a,b) + v_vvov(b,a,i,c) - sum(v_oovv(:,i,c,b)*t1(:,a)) &
+                     - sum(v_oovv(:,a,i,c)*t1(:,b))
+                  end do
+               end do
+            end do
+         end do
+
+         ! ----------------------------------------------------------------
+         ! I_jkia' = v_jkia + v_efia t_jkef + t_je x_ekia
+         ! v_jkia = v_ooov = v_oovo(k,j,a,i), reshape / loop might be similar
+         ! v_efia = v_vvov, a nice dgemm finally
+         I_ooov_p = reshape(v_oovo, shape(I_ooov_p), order=(/2,1,4,3/))
+         call dgemm_wrapper('N','N',nocc**2,nocc*nvirt,nvirt**2,t2,v_vvov,I_ooov_p,beta=1.0_p)
+         call dgemm_wrapper('N','N',nocc,nocc**2*nvirt,nvirt,t1,x_voov,I_ooov_p,beta=1.0_p)
+
+         ! ----------------------------------------------------------------
+         ! asym_t2 = 2*t_miea - t_imea
+         asym_t2 = reshape(t2, shape(asym_t2), order=(/2,1,3,4/))
+         asym_t2 = -asym_t2 + 2*t2
 
          end associate
 
