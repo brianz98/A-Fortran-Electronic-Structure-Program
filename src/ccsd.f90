@@ -1296,8 +1296,7 @@ module ccsd
          ! tmp_t2 from (i,j,a,b) to (j,i,b,a) and add it back to the original tmp_t2,
 
          ! -t_ij^ae*I_e^b, a nice dgemm
-         call dgemm_wrapper('N','N',nocc**2*nvirt,nvirt,nvirt,t2,I_vv,tmp_t2_s)
-         tmp_t2 = tmp_t2 + tmp_t2_s
+         call dgemm_wrapper('N','N',nocc**2*nvirt,nvirt,nvirt,t2,I_vv,tmp_t2,beta=1.0_dp)
 
          ! t_im^ab*I_j^m, benchmarking shows naive OMP is the fastest
          !$omp parallel do default(none)&
@@ -1346,8 +1345,7 @@ module ccsd
          !$omp end parallel do
 
          ! t_i^e I'_ej^ab - t_m^a I'_ij^mb, first dgemm, second OMP
-         call dgemm('N','N',nocc,nocc*nvirt**2,nvirt,t1,I_vovv_p,tmp_t2_s)
-         tmp_t2 = tmp_t2 + tmp_t2_s
+         call dgemm_wrapper('N','N',nocc,nocc*nvirt**2,nvirt,t1,I_vovv_p,tmp_t2,beta=1.0_dp)
 
          !$omp parallel do default(none)&
          !$omp schedule(static,10) collapse(2)&
