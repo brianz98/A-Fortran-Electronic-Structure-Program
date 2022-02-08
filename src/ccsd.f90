@@ -234,7 +234,7 @@ module ccsd
 
             ! CC amplitude equations
             call update_amplitudes(sys, cc_amp, int_store, cc_int)
-            call update_cc_energy(sys, st, cc_int, cc_amp, conv)
+            call update_cc_energy(sys, st, cc_int, cc_amp, conv, restricted=.false.)
             call system_clock(t1)
             write(iunit, '(1X, A, 1X, I2, 2X, F15.12, 2X, F8.6, 1X, A)') 'Iteration',iter,st%energy,real(t1-t0, kind=dp)/c_rate,'s'
             t0=t1
@@ -276,11 +276,11 @@ module ccsd
 
          use integrals, only: int_store_t, eri_ind
          use error_handling, only: error, check_allocate
-         use system, only: state_t
+         use system, only: state_t, CCSD_T_spinorb
 
          type(system_t), intent(inout) :: sys
          type(int_store_t), intent(inout) :: int_store
-         integer :: i, j, a, b, p, q, r, s
+         integer :: p, q, r, s
          integer :: pr, qr, pa, pb, qa, qb, ra, rb, sa, sb
          real(dp) :: prqs, psqr
          real(dp) :: err
@@ -292,14 +292,15 @@ module ccsd
          type(cc_amp_t) :: cc_amp
          integer :: ierr, iter
          integer, parameter :: iunit = 6
-         integer, parameter :: maxiter = 100
+         integer, parameter :: maxiter = 20
 
          type(cc_int_t) :: cc_int
          logical :: conv
 
-         write(iunit, '(1X, 14("-"))')
-         write(iunit, '(1X, A)') 'Spin-free CCSD'
-         write(iunit, '(1X, 14("-"))')
+         write(iunit, '(1X, 10("-"))')
+         write(iunit, '(1X, A)') 'CCSD'
+         write(iunit, '(1X, 10("-"))')
+         call system_clock(count=t0, count_rate=c_rate, count_max=c_max)
 
          ! ############################################
          ! Initialise intermediate arrays and DIIS data
@@ -320,40 +321,52 @@ module ccsd
          ! ###################
          ! Iterative CC solver
          ! ###################
-         associate(nbasis=>sys%nbasis, nocc=>sys%nocc, t_ia=>cc_amp%t_ia, t_ijab=>cc_amp%t_ijab, asym=>int_store%asym_spinorb)
-         do iter = 1, maxiter
+         associate(nbasis=>sys%nbasis, nvirt=>sys%nvirt, nocc=>sys%nocc, t_ia=>cc_amp%t_ia, t_ijab=>cc_amp%t_ijab)
+         do iter = 1, sys%ccsd_maxiter
+            if (diis%use_diis) then
+               ! These are for computing the error matrices for DIIS procedure
+               diis%t1_s = cc_amp%t_ia
+               diis%t2_s = cc_amp%t_ijab
+            end if
+
             ! Update intermediate tensors
-            call build_tau(sys, cc_amp, cc_int)
-            call build_F(sys, cc_int, cc_amp)
-            call build_W(sys, cc_int, cc_amp)
+            call update_restricted_intermediates(sys, cc_amp, cc_int)
 
             ! CC amplitude equations
-            call update_amplitudes(sys, cc_amp, int_store, cc_int)
-            call update_cc_energy(sys, st, cc_int, cc_amp, conv)
-            
+            call update_amplitudes_restricted(sys, cc_amp, int_store, cc_int)
+            call update_cc_energy(sys, st, cc_int, cc_amp, conv, restricted=.true.)
+            call system_clock(t1)
+            write(iunit, '(1X, A, 1X, I2, 2X, F15.12, 2X, F8.6, 1X, A)') 'Iteration',iter,st%energy,real(t1-t0, kind=dp)/c_rate,'s'
+            t0=t1
             if (conv) then
                write(iunit, '(1X, A)') 'Convergence reached within tolerance.'
-               write(iunit, '(1X, A, 1X, F15.8)') 'Final CCSD Energy (Hartree):', st%energy
+               write(iunit, '(1X, A, 1X, F15.12)') 'Final CCSD Energy (Hartree):', st%energy
 
                ! Copied for return 
                sys%e_ccsd = st%energy
                call move_alloc(cc_amp%t_ia, sys%t1)
                call move_alloc(cc_amp%t_ijab, sys%t2)
+               if (sys%calc_type == CCSD_T_spinorb) then
+                  call move_alloc(cc_int%vovv, int_store%vovv)
+                  call move_alloc(cc_int%ovoo, int_store%ovoo)
+                  allocate(int_store%vvoo(nvirt,nvirt,nocc,nocc))
+                  int_store%vvoo = reshape(cc_int%oovv,shape(int_store%vvoo),order=(/3,4,1,2/))
+                  deallocate(cc_int%oooo, cc_int%ooov, cc_int%oovo, cc_int%oovv, cc_int%ovvo, cc_int%ovvv, &
+                     cc_int%vvvv)
+               else
+                  deallocate(cc_int%oooo, cc_int%ooov, cc_int%ovoo, cc_int%oovo, cc_int%oovv, cc_int%ovvo, cc_int%ovvv, &
+                     cc_int%vovv, cc_int%vvvv)
+               end if
                exit
             end if
             call update_diis_cc(diis, cc_amp)
-
-            call system_clock(t1)
-            write(iunit, '(1X, A, 1X, I2, 2X, F10.7, 2X, F8.6, 1X, A)') 'Iteration', iter, st%energy,real(t1-t0, kind=dp)/c_rate,'s'
-            t0=t1
          end do
          end associate
 
          ! Nonlazy deallocations
          deallocate(st%t2_old)
          call deallocate_cc_int_t(cc_int)
-         call deallocate_diis_cc_t(diis)
-
+         if (diis%use_diis) call deallocate_diis_cc_t(diis)
 
       end subroutine do_ccsd_spatial
 
@@ -501,10 +514,12 @@ module ccsd
             call check_allocate('cc_int%I_ovov', (nocc*nvirt)**2, ierr)
             allocate(cc_int%I_voov(nvirt,nocc,nocc,nvirt), source=0.0_dp, stat=ierr)
             call check_allocate('cc_int%I_voov', (nocc*nvirt)**2, ierr)
-            allocate(cc_int%I_vovv_p(nvirt,nocc,nocc,nocc), source=0.0_dp, stat=ierr)
-            call check_allocate('cc_int%I_vovv_p', nvirt*nocc**3, ierr)
+            allocate(cc_int%I_vovv_p(nvirt,nocc,nvirt,nvirt), source=0.0_dp, stat=ierr)
+            call check_allocate('cc_int%I_vovv_p', nocc*nvirt**3, ierr)
             allocate(cc_int%I_ooov_p(nocc,nocc,nocc,nvirt), source=0.0_dp, stat=ierr)
             call check_allocate('cc_int%I_ooov_p', nvirt*nocc**3, ierr)
+            allocate(cc_int%asym_t2(nocc,nocc,nvirt,nvirt), source=0.0_dp, stat=ierr)
+            call check_allocate('cc_int%asym_t2', (nocc*nvirt)**2, ierr)
          else
             allocate(cc_int%F_vv(nvirt,nvirt), source=0.0_dp, stat=ierr)
             call check_allocate('cc_int%F_vv', nvirt**2, ierr)
@@ -1030,7 +1045,7 @@ module ccsd
          !$omp do collapse(2) schedule(static, 10)
          do a = 1, nvirt
             do b = 1, nvirt
-               I_vo(b,a) = sum((2*v_vvov(:,b,:,a) - v_vvov(:,b,a,:))*transpose(t1)) &
+               I_vv(b,a) = sum((2*v_vvov(:,b,:,a) - v_vvov(b,:,:,a))*transpose(t1)) &
                          - sum((2*v_oovv(:,:,:,b) - v_oovv(:,:,b,:))*c_oovv(:,:,:,a))
             end do 
          end do
@@ -1091,7 +1106,7 @@ module ccsd
          do a = 1, nocc
             do i = 1, nocc
                do b = 1, nvirt
-                  do j = 1, nvirt
+                  do j = 1, nocc
                      I_ovov(j,b,i,a) = I_ovov(j,b,i,a) - 0.5*sum(v_oovv(:,i,b,:)*c_oovv(j,:,:,a))
                   end do
                end do
@@ -1115,9 +1130,9 @@ module ccsd
          !$omp do collapse(2) schedule(static, 10)
          do a = 1, nvirt
             do i = 1, nocc
-               do e = 1, nvirt
+               do j = 1, nocc
                   do b = 1, nvirt
-                     x_voov(b,e,i,a) = sum(v_vvov(b,:,i,a)*t1(:,e))
+                     x_voov(b,j,i,a) = sum(v_vvov(b,:,i,a)*t1(j,:))
                   end do
                end do
             end do
@@ -1163,7 +1178,7 @@ module ccsd
                do i = 1, nocc
                   do c = 1, nvirt
                      I_vovv_p(c,i,a,b) = I_vovv_p(c,i,a,b) + v_vvov(b,a,i,c) - sum(v_oovv(:,i,c,b)*t1(:,a)) &
-                     - sum(v_oovv(:,a,i,c)*t1(:,b))
+                     - sum(v_ovov(:,a,i,c)*t1(:,b))
                   end do
                end do
             end do
@@ -1362,12 +1377,13 @@ module ccsd
 
       end subroutine update_amplitudes_restricted
 
-      subroutine update_cc_energy(sys, st, cc_int, cc_amp, conv)
+      subroutine update_cc_energy(sys, st, cc_int, cc_amp, conv, restricted)
          ! Updates the CC energy and also checks for convergence
          ! In:
          !     sys: system under study.
          !     cc_int: CC intermediates, of which we're using the cc_int%oovv slice.
          !     cc_amp: CC amplitudes.
+         !     restricted: whether we're performing a restricted calculation
          ! In/out:
          !     st: state_t object storing energies and RMS(T) info for convergence checking
          ! Out:
@@ -1379,6 +1395,7 @@ module ccsd
          type(system_t), intent(in) :: sys
          type(cc_int_t), intent(in) :: cc_int
          type(cc_amp_t), intent(in) :: cc_amp
+         logical, intent(in) :: restricted
          type(state_t), intent(inout) :: st
          logical, intent(out) :: conv
 
@@ -1387,11 +1404,32 @@ module ccsd
 
          conv = .false.
          st%energy_old = st%energy
-         associate(nocc=>sys%nocc, nvirt=>sys%nvirt, oovv=>cc_int%oovv, t1=>cc_amp%t_ia, t2=>cc_amp%t_ijab)
+         associate(v_oovv=>cc_int%v_oovv, c_oovv=>cc_int%c_oovv, nocc=>sys%nocc, nvirt=>sys%nvirt, &
+            oovv=>cc_int%oovv, t1=>cc_amp%t_ia, t2=>cc_amp%t_ijab)
+
+         if (restricted) then
             ecc = 0.0_p
             rmst2 = 0.0_p
             !$omp parallel default(none) &
-            !$omp private(i,j,a,b) &
+            !$omp shared(sys,st,cc_amp,ecc,rmst2,cc_int) 
+            !$omp do schedule(static, 10) collapse(2) reduction(+:ecc,rmst2)
+            do b = 1, nvirt
+               do a = 1, nvirt
+                  do j = 1, nocc
+                     do i = 1, nocc
+                        ecc = ecc + (2*v_oovv(i,j,a,b)-v_oovv(i,j,b,a))*c_oovv(i,j,a,b)
+                        ! We only do the RMS on T2 amplitudes
+                        rmst2 = rmst2 + (t2(i,j,a,b)-st%t2_old(i,j,a,b))**2
+                     end do
+                  end do
+               end do
+            end do
+            !$omp end do
+            !$omp end parallel
+         else
+            ecc = 0.0_p
+            rmst2 = 0.0_p
+            !$omp parallel default(none) &
             !$omp shared(sys,st,cc_amp,ecc,rmst2,cc_int) 
             !$omp do schedule(static, 10) collapse(2) reduction(+:ecc,rmst2)
             do b = 1, nvirt
@@ -1407,9 +1445,10 @@ module ccsd
             end do
             !$omp end do
             !$omp end parallel
-            st%energy = ecc
-            st%t2_old = t2
-            if (sqrt(rmst2) < sys%ccsd_t_tol .and. abs(st%energy-st%energy_old) < sys%ccsd_e_tol) conv = .true.
+         end if
+         st%energy = ecc
+         st%t2_old = t2
+         if (sqrt(rmst2) < sys%ccsd_t_tol .and. abs(st%energy-st%energy_old) < sys%ccsd_e_tol) conv = .true.
 
          end associate
 
