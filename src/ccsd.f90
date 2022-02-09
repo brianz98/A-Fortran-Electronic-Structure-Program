@@ -1027,21 +1027,19 @@ module ccsd
 
          ! ----------------------------------------------------------------
          ! I_ai = (2 v_aeim - v_eaim) t_me
-         ! ## Cache optimisation:
-         !  v_aeim = <im|ae> = <ae|im> = <ea|mi> = v_oovv(m,i,e,a)
+         ! v_aeim = v_oovv(m,i,e,a), v_eaim = v_oovv(m,i,a,e)
          !$omp do collapse(2) schedule(static, 10)
          do i = 1, nocc
             do a = 1, nvirt
-               I_vo(a,i) = sum((2*v_oovv(:,i,:,a) - v_oovv(:,i,a,:))*t1(:,:))
+               I_vo(a,i) = sum((2*v_oovv(:,i,:,a) - v_oovv(:,i,a,:))*t1)
             end do 
          end do
          !$omp end do
 
          ! ----------------------------------------------------------------
          ! I_ba = (2 v_beam - v_bema) t_me - (2 v_ebmn - v_bemn) c_mnea
-         ! ## Cache optimisation:
-         !  v_beam = v_vvov(e,b,m,a)
-         !  v_ebmn = <mn|eb> = v_oovv(m,n,e,b), v_bemn = v_oovv(m,n,b,e)
+         !  v_beam = v_vvov(e,b,m,a), v_bema = v_vvov(b,e,m,a)
+         !  v_ebmn = v_oovv(m,n,e,b), v_bemn = v_oovv(m,n,b,e)
          !$omp do collapse(2) schedule(static, 10)
          do a = 1, nvirt
             do b = 1, nvirt
@@ -1053,8 +1051,7 @@ module ccsd
 
          ! ----------------------------------------------------------------
          ! I_ji' = (2 v_jeim - 2 v_ejim) t_me + (v_efmi - v_efim) t_mjef
-         ! ## Cache optimisation:
-         !  v_jeim = <mi|ej> = v_oovo(m,i,e,j), v_ejim = v_oovo(i,m,e,j)
+         !  v_jeim = v_oovo(m,i,e,j), v_ejim = v_oovo(i,m,e,j)
          !  v_efmi = v_oovv(m,i,e,f), v_efim = v_oovv(m,i,f,e)
          !  to align the indices the second term has to be broken into two sums, and t_mjef = t_jmfe is used
          !$omp do collapse(2) schedule(static, 10)
@@ -1075,11 +1072,12 @@ module ccsd
          I_oo = I_oo_p + matmul(t1, I_vo)
 
          ! ----------------------------------------------------------------
-         ! I_klij = v_klij + v_ejif c_klef + P(ik/jl) t_ke v_elij
-         !     v_ejif <= reshape v_oovv(i,j,e,f) into efji then we have a dgemm
+         ! I_klij = v_klij + v_efij c_klef + P(ik/jl) t_ke v_elij
+         !     v_efij <= reshape v_oovv(i,j,e,f) into efij then we have a dgemm
          !     v_elij <= reshape v_oovo(i,l,e,j) into elij
+         I_oooo = v_oooo
          allocate(reshape_tmp(nvirt, nvirt, nocc, nocc))
-         reshape_tmp = reshape(v_oovv, shape(reshape_tmp), order=(/4,3,1,2/))
+         reshape_tmp = reshape(v_oovv, shape(reshape_tmp), order=(/3,4,1,2/))
          call dgemm_wrapper('N','N',nocc**2,nocc**2,nvirt**2,c_oovv,reshape_tmp,I_oooo,beta=1.0_dp)
          deallocate(reshape_tmp)
          allocate(reshape_tmp(nvirt,nocc,nocc,nocc))
@@ -1090,13 +1088,13 @@ module ccsd
          allocate(reshape_tmp(nocc,nocc,nocc,nocc))
          reshape_tmp = reshape(scratch, shape(reshape_tmp), order=(/2,1,4,3/))
          I_oooo = I_oooo + scratch + reshape_tmp
-         deallocate(reshape_tmp) 
+         deallocate(reshape_tmp, scratch) 
 
          ! ----------------------------------------------------------------
          ! I_jbia = v_jbia - 1/2 v_ebim c_jmea - v_jbim t_ma + v_ebia t_je
          ! v_jbia = v_ovov
-         ! v_ebim c_jmea = v_oovv(:,i,b,:) * c_oovv(j,:,:,a)
-         ! v_jbim <= v_oovo(m,i,b,j) reshape, then dgemm with t_ma
+         ! v_ebim c_jmea = v_oovv(m,i,b,e) * c_oovv(j,m,e,a)
+         ! v_jbim <= v_oovo(m,i,b,j) reshape to jbim, then dgemm with t_ma
          ! v_ebia = v_vvov, direct dgemm
          I_ovov = v_ovov
          
@@ -1118,7 +1116,7 @@ module ccsd
 
          allocate(reshape_tmp(nocc,nvirt,nocc,nocc))
          reshape_tmp = reshape(v_oovo, shape(reshape_tmp), order=(/4,3,2,1/))
-         call dgemm_wrapper('N','N',nocc**2*nvirt,nvirt,nocc,reshape_tmp,t1,I_ovov,beta=-1.0_dp)
+         call dgemm_wrapper('N','N',nocc**2*nvirt,nvirt,nocc,reshape_tmp,t1,I_ovov,alpha=-1.0_dp,beta=1.0_dp)
          deallocate(reshape_tmp)
          call dgemm_wrapper('N','N',nocc,nocc*nvirt**2,nvirt,t1,v_vvov,I_ovov,beta=1.0_dp)
 
@@ -1142,13 +1140,12 @@ module ccsd
          !$omp end parallel
 
          ! ----------------------------------------------------------------
-         ! I_bjia = v_bjia + v_beim t_mjea - 0.5 v_mbie t_jmae - 0.5 v_beim c_mjae + v_beia t_je - v_bjim t_ma
-         ! v_bjia = v_voov(b,j,i,a) = v_oovv(i,j,b,a) reshape needed
+         ! I_bjia = v_bjia + v_beim (t_mjea - 0.5 c_mjae) - 0.5 v_mbie t_jmae + v_beia t_je - v_bjim t_ma
+         ! v_bjia = v_oovv(j,i,a,b)
          ! v_beim = v_oovv(m,i,e,b)
          ! v_mbie = v_ovov(m,e,i,b), both contracted indices in front
          ! v_beia = v_vvov(b,e,i,a), can't really help
          ! v_jbim t_ma = v_oovv(m,i,b,j) * t1(m,a) (contracted indices at the front)
-         I_voov = reshape(v_oovv, shape(I_voov), order=(/3,2,1,4/))
 
          !$omp parallel default(none) shared(sys, cc_amp, cc_int) 
 
@@ -1157,7 +1154,7 @@ module ccsd
             do i = 1, nocc
                do b = 1, nvirt
                   do j = 1, nocc
-                     I_voov(b,j,i,a) = I_voov(b,j,i,a) + sum(v_oovv(:,i,:,b)*(t2(:,j,:,a)-0.5*c_oovv(:,j,a,:))) - &
+                     I_voov(b,j,i,a) = v_oovv(j,i,a,b) + sum(v_oovv(:,i,:,b)*(t2(:,j,:,a)-0.5*c_oovv(:,j,a,:))) - &
                      0.5*sum(v_ovov(:,:,i,b)*t2(:,j,:,a)) + sum(v_vvov(b,:,i,a)*t1(j,:)) - sum(v_oovv(:,i,b,j)*t1(:,a))
                   end do
                end do
@@ -1177,8 +1174,8 @@ module ccsd
             do a = 1, nvirt
                do i = 1, nocc
                   do c = 1, nvirt
-                     I_vovv_p(c,i,a,b) = I_vovv_p(c,i,a,b) + v_vvov(b,a,i,c) - sum(v_oovv(:,i,c,b)*t1(:,a)) &
-                     - sum(v_ovov(:,a,i,c)*t1(:,b))
+                     I_vovv_p(c,i,a,b) = v_vvov(b,a,i,c) - sum(v_ovov(:,a,i,c)*t1(:,b)) - sum(v_oovv(:,i,c,b)*t1(:,a))
+                     
                   end do
                end do
             end do
@@ -1186,7 +1183,7 @@ module ccsd
 
          ! ----------------------------------------------------------------
          ! I_jkia' = v_jkia + v_efia t_jkef + t_je x_ekia
-         ! v_jkia = v_ooov = v_oovo(k,j,a,i), reshape / loop might be similar
+         ! v_jkia = v_oovo(k,j,a,i), reshape / loop might be similar
          ! v_efia = v_vvov, a nice dgemm finally
          I_ooov_p = reshape(v_oovo, shape(I_ooov_p), order=(/2,1,4,3/))
          call dgemm_wrapper('N','N',nocc**2,nocc*nvirt,nvirt**2,t2,v_vvov,I_ooov_p,beta=1.0_p)
@@ -1234,10 +1231,12 @@ module ccsd
          ! ##################################################### T1 Updates ########################################################
          ! #########################################################################################################################
 
+         ! ------------------ Eq. 43, terms 2-3 ----------------------------------------------
          ! t_ie * I_ea -I'_im * t_ma, simple matmuls
          ! Benchmarking suggests that the Fortran intrinsic matmul beats threaded dgemm, not to mention naive OpenMP. So here we go
          tmp_t1 = matmul(t1, I_vv) - matmul(I_oo_p, t1)
 
+         ! ------------------ Eq. 43, terms 4-5 ----------------------------------------------
          ! I_em ( 2 t_miea - t_imea ) + t_me (2 v_eima - v_eiam)
          !  = I_vo^T(m,e)*asym_t2(m,i,e,a) + 2*t1(m,e)*v_oovv(m,i,e,a) - t1(m,e)*v_ovov(m,a,i,e)
          !$omp parallel do default(none)&
@@ -1252,11 +1251,12 @@ module ccsd
          end do
          !$omp end parallel do
 
+         ! ------------------ Eq. 43, term 6 -------------------------------------------------
          ! - v_ei^mn (2 t_mn^ea - t_mn^ae) 
          ! This is a clear case where we can benefit from dgemm 
          ! (see my benchmarking script at https://github.com/brianz98/fortran-tensor-benchmarking).
          ! As the number of contracted indices becomes large, the (significant) overhead of dgemm becomes negligible.
-
+         !
          ! v_ei^mn would require a tensor of type v_vooo, but we only have v_oovo, which is permutationally equivalent
          ! v_ei^mn would be accessed by v_oovo(m,i,e,n), which is why we need order=2,1,4,3 to permute it into (i,m,n,e)
          ! We would like to not store the reshaped arrays but gfortran doesn't like big arrays on the stack (ifort has the 
@@ -1268,35 +1268,39 @@ module ccsd
          allocate(reshape_tmp1(nocc,nocc,nocc,nvirt))
 
          reshape_tmp1 = reshape(v_oovo,(/nocc,nocc,nocc,nvirt/),order=(/2,1,4,3/))
-         call dgemm_wrapper('N','N',nocc,nvirt,nocc**2*nvirt,reshape_tmp1,asym_t2,tmp_t1,beta=-1.0_p)
+         call dgemm_wrapper('N','N',nocc,nvirt,nocc**2*nvirt,reshape_tmp1,asym_t2,tmp_t1,alpha=-1.0_p,beta=1.0_p)
          deallocate(reshape_tmp1)
+
+         ! ------------------ Eq. 43, term 7 -------------------------------------------------
          ! + v_ef^ma (2 t_mi^ef - t_im^ef)
          ! v_efma is type v_vvov, which can be accessed via v_vvov(e,f,m,a), and reshape into (m,e,f,a)
          ! second quantity is the 'asymmetrised t2'(m,i,e,f), which we need to reshape into (i,m,e,f)
          allocate(reshape_tmp1(nocc,nvirt,nvirt,nvirt), reshape_tmp2(nocc,nocc,nvirt,nvirt))
          reshape_tmp1 = reshape(v_vvov,(/nocc,nvirt,nvirt,nvirt/),order=(/2,3,1,4/))
          reshape_tmp2 = reshape(asym_t2,(/nocc,nocc,nvirt,nvirt/),order=(/2,1,3,4/))
-         call dgemm_wrapper('N','N',nocc,nvirt,nocc*nvirt**2,reshape_tmp1,reshape_tmp2,tmp_t1,beta=1.0_p)
+         call dgemm_wrapper('N','N',nocc,nvirt,nocc*nvirt**2,reshape_tmp2,reshape_tmp1,tmp_t1,beta=1.0_p)
 
-         ! We no longer need the t1 scratch matrix, but now we need a t2 one
+         ! We no longer need the t1 scratch array, but now we need a t2 one
          deallocate(tmp_t1_s, reshape_tmp1, reshape_tmp2)
-
-         allocate(tmp_t2_s(nocc,nocc,nvirt,nvirt))
 
          ! #########################################################################################################################
          ! ##################################################### T2 Updates ########################################################
          ! #########################################################################################################################         
 
+         allocate(tmp_t2_s(nocc,nocc,nvirt,nvirt))
+         ! ------------------ Eq. 44, term 1 -------------------------------------------------
          tmp_t2 = v_oovv
 
          ! We have a permutation operator P(ia/jb), after v_ij^ab, meaning i becomes j and a becomes b, 
          ! and conveniently what we actually need to do to perform the action of the permutation is to just reshape
          ! tmp_t2 from (i,j,a,b) to (j,i,b,a) and add it back to the original tmp_t2,
 
-         ! -t_ij^ae*I_e^b, a nice dgemm
+         ! ------------------ Eq. 44, term 2 -------------------------------------------------
+         ! t_ij^ae*I_e^b, a nice dgemm
          call dgemm_wrapper('N','N',nocc**2*nvirt,nvirt,nvirt,t2,I_vv,tmp_t2,beta=1.0_dp)
 
-         ! t_im^ab*I_j^m, benchmarking shows naive OMP is the fastest
+         ! ------------------ Eq. 44, term 3 -------------------------------------------------
+         ! -t_im^ab*I_j^m, benchmarking shows naive OMP is the fastest
          !$omp parallel do default(none)&
          !$omp schedule(static,10) collapse(2)&
          !$omp shared(sys, cc_amp, cc_int)
@@ -1304,19 +1308,22 @@ module ccsd
             do a = 1, nvirt
                do j = 1, nocc
                   do i = 1, nocc
-                     tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) - dot_product(t2(i,:,a,b),I_oo(j,:))
+                     tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) - sum(t2(:,i,b,a)*I_oo(j,:))
                   end do
                end do
             end do
          end do
          !$omp end parallel do
 
+         ! ------------------ Eq. 44, term 4 -------------------------------------------------
          ! 1/2 v_ef^ab c_ij^ef, nice dgemm again
          call dgemm_wrapper('N','N',nocc**2,nvirt**2,nvirt**2,c_oovv,v_vvvv,tmp_t2,alpha=0.5_p,beta=1.0_p)
 
+         ! ------------------ Eq. 44, term 5 -------------------------------------------------
          ! 1/2 c_mn^ab I_ij^mn, nice dgemm
          call dgemm_wrapper('N','N',nocc**2,nvirt**2,nocc**2,I_oooo,c_oovv,tmp_t2,alpha=0.5_p,beta=1.0_p)
 
+         ! ------------------ Eq. 44, terms 6-8 ----------------------------------------------
          ! -t_mj^ae I_ie^mb - I_ie^ma t_mj^ab + (2t_mi^ea - t_im^ea) I_ej^mb, seems hopeless, use OMP
          !$omp parallel do default(none)&
          !$omp schedule(static,10) collapse(4)&
@@ -1340,6 +1347,7 @@ module ccsd
          end do
          !$omp end parallel do
 
+         ! ------------------ Eq. 44, terms 9-10 ---------------------------------------------
          ! t_i^e I'_ej^ab - t_m^a I'_ij^mb, first dgemm, second OMP
          call dgemm_wrapper('N','N',nocc,nocc*nvirt**2,nvirt,t1,I_vovv_p,tmp_t2,beta=1.0_dp)
 
