@@ -1268,8 +1268,7 @@ module ccsd
          allocate(reshape_tmp1(nocc,nocc,nocc,nvirt))
 
          reshape_tmp1 = reshape(v_oovo,(/nocc,nocc,nocc,nvirt/),order=(/2,1,4,3/))
-         call dgemm_wrapper('N','N',nocc,nvirt,nocc**2*nvirt,reshape_tmp1,asym_t2,tmp_t1_s)
-         tmp_t1 = tmp_t1 - tmp_t1_s
+         call dgemm_wrapper('N','N',nocc,nvirt,nocc**2*nvirt,reshape_tmp1,asym_t2,tmp_t1,beta=-1.0_p)
          deallocate(reshape_tmp1)
          ! + v_ef^ma (2 t_mi^ef - t_im^ef)
          ! v_efma is type v_vvov, which can be accessed via v_vvov(e,f,m,a), and reshape into (m,e,f,a)
@@ -1277,8 +1276,7 @@ module ccsd
          allocate(reshape_tmp1(nocc,nvirt,nvirt,nvirt), reshape_tmp2(nocc,nocc,nvirt,nvirt))
          reshape_tmp1 = reshape(v_vvov,(/nocc,nvirt,nvirt,nvirt/),order=(/2,3,1,4/))
          reshape_tmp2 = reshape(asym_t2,(/nocc,nocc,nvirt,nvirt/),order=(/2,1,3,4/))
-         call dgemm_wrapper('N','N',nocc,nvirt,nocc*nvirt**2,reshape_tmp1,reshape_tmp2,tmp_t1_s)
-         tmp_t1 = tmp_t1 + tmp_t1_s
+         call dgemm_wrapper('N','N',nocc,nvirt,nocc*nvirt**2,reshape_tmp1,reshape_tmp2,tmp_t1,beta=1.0_p)
 
          ! We no longer need the t1 scratch matrix, but now we need a t2 one
          deallocate(tmp_t1_s, reshape_tmp1, reshape_tmp2)
@@ -1314,12 +1312,10 @@ module ccsd
          !$omp end parallel do
 
          ! 1/2 v_ef^ab c_ij^ef, nice dgemm again
-         call dgemm_wrapper('N','N',nocc**2,nvirt**2,nvirt**2,c_oovv,v_vvvv,tmp_t2_s)
-         tmp_t2 = tmp_t2 + tmp_t2_s/2
+         call dgemm_wrapper('N','N',nocc**2,nvirt**2,nvirt**2,c_oovv,v_vvvv,tmp_t2,alpha=0.5_p,beta=1.0_p)
 
          ! 1/2 c_mn^ab I_ij^mn, nice dgemm
-         call dgemm_wrapper('N','N',nocc**2,nvirt**2,nocc**2,I_oooo,c_oovv,tmp_t2_s)
-         tmp_t2 = tmp_t2 + tmp_t2_s/2
+         call dgemm_wrapper('N','N',nocc**2,nvirt**2,nocc**2,I_oooo,c_oovv,tmp_t2,alpha=0.5_p,beta=1.0_p)
 
          ! -t_mj^ae I_ie^mb - I_ie^ma t_mj^ab + (2t_mi^ea - t_im^ea) I_ej^mb, seems hopeless, use OMP
          !$omp parallel do default(none)&
