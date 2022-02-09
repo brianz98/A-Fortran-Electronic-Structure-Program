@@ -464,10 +464,10 @@ module ccsd
             
             do s = 1, nbasis
                do r = 1, nbasis
-                  rs = eri_ind(r,s)
                   do q = 1, nbasis
                      do p = 1, nbasis
-                        temperi(p,q,r,s) = int_store%eri_mo(eri_ind(eri_ind(p,q),rs))
+                        ! We're going from the chemists' to the physicists' notation
+                        temperi(p,q,r,s) = int_store%eri_mo(eri_ind(eri_ind(p,r),eri_ind(q,s)))
                      end do
                   end do
                end do
