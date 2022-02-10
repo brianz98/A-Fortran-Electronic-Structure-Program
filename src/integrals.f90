@@ -213,11 +213,14 @@ module integrals
             write(iunit, '(1X, 20("-"))')
             write(iunit, '(1X, A, 1X, I0)') 'Number of electrons:', sys%nel
             write(iunit, '(1X, A, 1X, I0)') 'Number of basis functions:', sys%nbasis
+            write(iunit, '(1X, A, 1X, I0)') 'Number of occupied orbitals:', sys%nocc
+            write(iunit, '(1X, A, 1X, I0)') 'Number of virtual orbitals:', sys%nvirt
             write(iunit, '(1X, A, 1X, ES15.8)') 'E_nuc:', int_store%e_nuc
             write(iunit, '(1X, A, 1X, ES8.2)') 'scf_e_tol:', sys%scf_e_tol
             write(iunit, '(1X, A, 1X, ES8.2)') 'scf_d_tol:', sys%scf_d_tol
             write(iunit, '(1X, A, 1X, ES8.2)') 'ccsd_e_tol:', sys%ccsd_e_tol
             write(iunit, '(1X, A, 1X, ES8.2)') 'ccsd_t_tol:', sys%ccsd_t_tol
+
 
         end subroutine print_sys_info
 

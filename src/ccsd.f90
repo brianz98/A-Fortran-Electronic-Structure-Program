@@ -476,7 +476,7 @@ module ccsd
             cc_int%v_oovv = temperi(1:nocc,1:nocc,nocc+1:nbasis,nocc+1:nbasis)
             cc_int%v_ovov = temperi(1:nocc,nocc+1:nbasis,1:nocc,nocc+1:nbasis)
             cc_int%v_vvov = temperi(nocc+1:nbasis,nocc+1:nbasis,1:nocc,nocc+1:nbasis)
-            cc_int%v_oovo = temperi(1:nocc,1:nocc,nocc+1:nbasis,nocc+1:nbasis)
+            cc_int%v_oovo = temperi(1:nocc,1:nocc,nocc+1:nbasis,1:nocc)
             cc_int%v_oooo = temperi(1:nocc,1:nocc,1:nocc,1:nocc)
             cc_int%v_vvvv = temperi(nocc+1:nbasis,nocc+1:nbasis,nocc+1:nbasis,nocc+1:nbasis)
 
@@ -1058,7 +1058,7 @@ module ccsd
          do i = 1, nocc
             do j = 1, nocc
                I_oo_p(j,i) = sum((2*v_oovo(:,i,:,j) - v_oovo(i,:,:,j))*t1) &
-                         - sum(v_oovv(:,i,:,:)*t2(:,j,:,:)) + sum(v_oovv(:,i,:,:)*t2(j,:,:,:))
+                         + sum(v_oovv(:,i,:,:)*t2(:,j,:,:)) - sum(v_oovv(:,i,:,:)*t2(j,:,:,:))
             end do 
          end do
          !$omp end do
@@ -1093,7 +1093,7 @@ module ccsd
          ! ----------------------------------------------------------------
          ! I_jbia = v_jbia - 1/2 v_ebim c_jmea - v_jbim t_ma + v_ebia t_je
          ! v_jbia = v_ovov
-         ! v_ebim c_jmea = v_oovv(m,i,b,e) * c_oovv(j,m,e,a)
+         ! v_ebim c_jmea = v_oovv(m,i,b,e) * c_oovv(m,j,a,e)
          ! v_jbim <= v_oovo(m,i,b,j) reshape to jbim, then dgemm with t_ma
          ! v_ebia = v_vvov, direct dgemm
          I_ovov = v_ovov
@@ -1101,11 +1101,11 @@ module ccsd
          !$omp parallel default(none) shared(sys, cc_amp, cc_int) 
 
          !$omp do collapse(2) schedule(static, 10)
-         do a = 1, nocc
+         do a = 1, nvirt
             do i = 1, nocc
                do b = 1, nvirt
                   do j = 1, nocc
-                     I_ovov(j,b,i,a) = I_ovov(j,b,i,a) - 0.5*sum(v_oovv(:,i,b,:)*c_oovv(j,:,:,a))
+                     I_ovov(j,b,i,a) = I_ovov(j,b,i,a) - 0.5*sum(v_oovv(:,i,b,:)*c_oovv(:,j,a,:))
                   end do
                end do
             end do 
@@ -1121,31 +1121,12 @@ module ccsd
          call dgemm_wrapper('N','N',nocc,nocc*nvirt**2,nvirt,t1,v_vvov,I_ovov,beta=1.0_dp)
 
          ! ----------------------------------------------------------------
-         ! x_bjia = v_beia t_je
-         ! v_beia = v_vvov
-         !$omp parallel default(none) shared(sys, cc_amp, cc_int) 
-
-         !$omp do collapse(2) schedule(static, 10)
-         do a = 1, nvirt
-            do i = 1, nocc
-               do j = 1, nocc
-                  do b = 1, nvirt
-                     x_voov(b,j,i,a) = sum(v_vvov(b,:,i,a)*t1(j,:))
-                  end do
-               end do
-            end do
-         end do
-         !$omp end do
-
-         !$omp end parallel
-
-         ! ----------------------------------------------------------------
          ! I_bjia = v_bjia + v_beim (t_mjea - 0.5 c_mjae) - 0.5 v_mbie t_jmae + v_beia t_je - v_bjim t_ma
          ! v_bjia = v_oovv(j,i,a,b)
          ! v_beim = v_oovv(m,i,e,b)
          ! v_mbie = v_ovov(m,e,i,b), both contracted indices in front
          ! v_beia = v_vvov(b,e,i,a), can't really help
-         ! v_jbim t_ma = v_oovv(m,i,b,j) * t1(m,a) (contracted indices at the front)
+         ! v_jbim t_ma = v_oovo(m,i,b,j) * t1(m,a) (contracted indices at the front)
 
          !$omp parallel default(none) shared(sys, cc_amp, cc_int) 
 
@@ -1155,7 +1136,7 @@ module ccsd
                do b = 1, nvirt
                   do j = 1, nocc
                      I_voov(b,j,i,a) = v_oovv(j,i,a,b) + sum(v_oovv(:,i,:,b)*(t2(:,j,:,a)-0.5*c_oovv(:,j,a,:))) - &
-                     0.5*sum(v_ovov(:,:,i,b)*t2(:,j,:,a)) + sum(v_vvov(b,:,i,a)*t1(j,:)) - sum(v_oovv(:,i,b,j)*t1(:,a))
+                     0.5*sum(v_ovov(:,:,i,b)*t2(:,j,:,a)) + sum(v_vvov(b,:,i,a)*t1(j,:)) - sum(v_oovo(:,i,b,j)*t1(:,a))
                   end do
                end do
             end do
@@ -1180,6 +1161,25 @@ module ccsd
                end do
             end do
          end do
+
+         ! ----------------------------------------------------------------
+         ! x_bjia = v_beia t_je
+         ! v_beia = v_vvov
+         !$omp parallel default(none) shared(sys, cc_amp, cc_int) 
+
+         !$omp do collapse(2) schedule(static, 10)
+         do a = 1, nvirt
+            do i = 1, nocc
+               do j = 1, nocc
+                  do b = 1, nvirt
+                     x_voov(b,j,i,a) = sum(v_vvov(b,:,i,a)*t1(j,:))
+                  end do
+               end do
+            end do
+         end do
+         !$omp end do
+
+         !$omp end parallel
 
          ! ----------------------------------------------------------------
          ! I_jkia' = v_jkia + v_efia t_jkef + t_je x_ekia
@@ -1215,7 +1215,7 @@ module ccsd
          type(cc_amp_t), intent(inout) :: cc_amp
          type(cc_int_t), intent(inout) :: cc_int
 
-         real(dp), dimension(:,:,:,:), allocatable :: reshape_tmp1, reshape_tmp2, tmp_t1_s(:,:), tmp_t2_s
+         real(dp), dimension(:,:,:,:), allocatable :: reshape_tmp1, reshape_tmp2, tmp_t2_s
          real(dp) :: tmp
          integer :: i, j, a, b, m, e
 
@@ -1264,7 +1264,6 @@ module ccsd
          ! Anyways, we'll have to resort to using temporary arrays to ensure portability.
          
          ! We further need a scratch t1 matrix as dgemm 'C' is overwritten
-         allocate(tmp_t1_s(nocc,nvirt))
          allocate(reshape_tmp1(nocc,nocc,nocc,nvirt))
 
          reshape_tmp1 = reshape(v_oovo,(/nocc,nocc,nocc,nvirt/),order=(/2,1,4,3/))
@@ -1280,16 +1279,14 @@ module ccsd
          reshape_tmp2 = reshape(asym_t2,(/nocc,nocc,nvirt,nvirt/),order=(/2,1,3,4/))
          call dgemm_wrapper('N','N',nocc,nvirt,nocc*nvirt**2,reshape_tmp2,reshape_tmp1,tmp_t1,beta=1.0_p)
 
-         ! We no longer need the t1 scratch array, but now we need a t2 one
-         deallocate(tmp_t1_s, reshape_tmp1, reshape_tmp2)
-
          ! #########################################################################################################################
          ! ##################################################### T2 Updates ########################################################
          ! #########################################################################################################################         
 
-         allocate(tmp_t2_s(nocc,nocc,nvirt,nvirt))
          ! ------------------ Eq. 44, term 1 -------------------------------------------------
-         tmp_t2 = v_oovv
+         ! We delay the addition of v_ijab until the end so we can accumulate the entire bracketed quantity in tmp_t2, 
+         ! then apply the permutation directly
+         tmp_t2 = 0.0_dp
 
          ! We have a permutation operator P(ia/jb), after v_ij^ab, meaning i becomes j and a becomes b, 
          ! and conveniently what we actually need to do to perform the action of the permutation is to just reshape
@@ -1367,8 +1364,10 @@ module ccsd
 
          ! P(ia/jb) just means we swap i/j and a/b and add it back to the tensor
          ! Again, it would be nice if we can just say tmp_t2 = reshape(tmp_t2,...) but gfortran can't do it
+         allocate(tmp_t2_s(nocc,nocc,nvirt,nvirt))
          tmp_t2_s = reshape(tmp_t2, (/nocc,nocc,nvirt,nvirt/),order=(/2,1,4,3/))
-         tmp_t2 = tmp_t2 + tmp_t2_s
+         tmp_t2 = tmp_t2 + tmp_t2_s + v_oovv
+         deallocate(tmp_t2_s)
 
          ! We now write the cluster amplitudes into the actual tensors
          ! Benchmarking shows we don't have to worry about doing this without parallelisation
