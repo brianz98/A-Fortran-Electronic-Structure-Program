@@ -265,7 +265,7 @@ module ccsd
 
          ! Nonlazy deallocations
          deallocate(st%t2_old)
-         call deallocate_cc_int_t(cc_int)
+         call deallocate_cc_int_t(cc_int, restricted=.false.)
          if (diis%use_diis) call deallocate_diis_cc_t(diis)
 
       end subroutine do_ccsd_spinorb
@@ -276,7 +276,7 @@ module ccsd
 
          use integrals, only: int_store_t, eri_ind
          use error_handling, only: error, check_allocate
-         use system, only: state_t, CCSD_T_spinorb
+         use system, only: state_t, CCSD_T_spatial
 
          type(system_t), intent(inout) :: sys
          type(int_store_t), intent(inout) :: int_store
@@ -346,16 +346,8 @@ module ccsd
                sys%e_ccsd = st%energy
                call move_alloc(cc_amp%t_ia, sys%t1)
                call move_alloc(cc_amp%t_ijab, sys%t2)
-               if (sys%calc_type == CCSD_T_spinorb) then
-                  call move_alloc(cc_int%vovv, int_store%vovv)
-                  call move_alloc(cc_int%ovoo, int_store%ovoo)
-                  allocate(int_store%vvoo(nvirt,nvirt,nocc,nocc))
-                  int_store%vvoo = reshape(cc_int%oovv,shape(int_store%vvoo),order=(/3,4,1,2/))
-                  deallocate(cc_int%oooo, cc_int%ooov, cc_int%oovo, cc_int%oovv, cc_int%ovvo, cc_int%ovvv, &
-                     cc_int%vvvv)
-               else
-                  deallocate(cc_int%oooo, cc_int%ooov, cc_int%ovoo, cc_int%oovo, cc_int%oovv, cc_int%ovvo, cc_int%ovvv, &
-                     cc_int%vovv, cc_int%vvvv)
+               if (sys%calc_type == CCSD_T_spatial) then
+                  continue
                end if
                exit
             end if
@@ -365,7 +357,7 @@ module ccsd
 
          ! Nonlazy deallocations
          deallocate(st%t2_old)
-         call deallocate_cc_int_t(cc_int)
+         call deallocate_cc_int_t(cc_int, restricted=.true.)
          if (diis%use_diis) call deallocate_diis_cc_t(diis)
 
       end subroutine do_ccsd_spatial
@@ -542,18 +534,27 @@ module ccsd
 
       end subroutine init_cc
 
-      subroutine deallocate_cc_int_t(cc_int)
+      subroutine deallocate_cc_int_t(cc_int, restricted)
          ! Nonlazy deallocation of the relatively large CC intermediate arrays.
+         ! In:
+         !     restricted: whether we're doing a restricted CC calculation
          ! In/out:
          !     cc_int: cc_int_t object being deallocated.
 
+         logical, intent(in) :: restricted
          type(cc_int_t), intent(inout) :: cc_int
 
-         deallocate(cc_int%F_oo, cc_int%F_vv, cc_int%F_ov)
-         deallocate(cc_int%W_oooo, cc_int%W_vvvv, cc_int%W_ovvo)
-         deallocate(cc_int%tau, cc_int%tau_tilde)
-         deallocate(cc_int%D_ia, cc_int%D_ijab)
-         deallocate(cc_int%tmp_tia, cc_int%tmp_tijab)
+         if (.not. restricted) then
+            deallocate(cc_int%F_oo, cc_int%F_vv, cc_int%F_ov)
+            deallocate(cc_int%W_oooo, cc_int%W_vvvv, cc_int%W_ovvo)
+            deallocate(cc_int%tau, cc_int%tau_tilde)
+            deallocate(cc_int%D_ia, cc_int%D_ijab)
+            deallocate(cc_int%tmp_tia, cc_int%tmp_tijab)
+         else
+            deallocate(cc_int%I_vo, cc_int%I_vv, cc_int%I_oo_p, cc_int%I_oo)
+            deallocate(cc_int%c_oovv, cc_int%x_voov, cc_int%I_oooo, cc_int%I_ovov, cc_int%I_voov, cc_int%I_vovv_p, cc_int%I_ooov_p)
+            deallocate(cc_int%asym_t2, cc_int%v_oovv, cc_int%v_ovov, cc_int%v_vvov, cc_int%v_oovo, cc_int%v_oooo, cc_int%v_vvvv)
+         end if
       end subroutine
 
       subroutine init_diis_cc_t(sys, diis)
@@ -998,6 +999,8 @@ module ccsd
          type(cc_int_t), intent(inout) :: cc_int
 
          integer :: i, j, a, b, c, e
+         integer :: m, n, f
+         real(dp) :: tmp
          real(dp), allocatable, dimension(:,:,:,:) :: reshape_tmp, scratch
 
          associate(tmp_t1=>cc_int%tmp_tia,tmp_t2=>cc_int%tmp_tijab,t1=>cc_amp%t_ia,t2=>cc_amp%t_ijab, &
@@ -1028,10 +1031,17 @@ module ccsd
          ! ----------------------------------------------------------------
          ! I_ai = (2 v_aeim - v_eaim) t_me
          ! v_aeim = v_oovv(m,i,e,a), v_eaim = v_oovv(m,i,a,e)
-         !$omp do collapse(2) schedule(static, 10)
+         !$omp do collapse(2) schedule(static, 10) 
          do i = 1, nocc
             do a = 1, nvirt
                I_vo(a,i) = sum((2*v_oovv(:,i,:,a) - v_oovv(:,i,a,:))*t1)
+               !tmp = 0.0_p
+               !do e = 1, nvirt
+               !   do m = 1, nocc
+               !      tmp = tmp + (2*v_oovv(m,i,e,a) - v_oovv(m,i,a,e))*t1(m,e)
+               !   end do
+               !end do
+               !I_vo(a,i) = tmp
             end do 
          end do
          !$omp end do
@@ -1040,11 +1050,21 @@ module ccsd
          ! I_ba = (2 v_beam - v_bema) t_me - (2 v_ebmn - v_bemn) c_mnea
          !  v_beam = v_vvov(e,b,m,a), v_bema = v_vvov(b,e,m,a)
          !  v_ebmn = v_oovv(m,n,e,b), v_bemn = v_oovv(m,n,b,e)
-         !$omp do collapse(2) schedule(static, 10)
+         !$omp do collapse(2) schedule(static, 10) 
          do a = 1, nvirt
             do b = 1, nvirt
                I_vv(b,a) = sum((2*v_vvov(:,b,:,a) - v_vvov(b,:,:,a))*transpose(t1)) &
                          - sum((2*v_oovv(:,:,:,b) - v_oovv(:,:,b,:))*c_oovv(:,:,:,a))
+               !tmp = 0.0_p
+               !do e = 1, nvirt
+               !   do m = 1, nocc
+               !      tmp = tmp + (2*v_vvov(e,b,m,a)-v_vvov(b,e,m,a))*t1(m,e)
+               !      do n = 1, nocc
+               !         tmp = tmp - (2*v_oovv(m,n,e,b) - v_oovv(m,n,b,e))*c_oovv(m,n,e,a)
+               !      end do
+               !   end do
+               !end do
+               !I_vv(b,a) = tmp
             end do 
          end do
          !$omp end do
@@ -1059,6 +1079,16 @@ module ccsd
             do j = 1, nocc
                I_oo_p(j,i) = sum((2*v_oovo(:,i,:,j) - v_oovo(i,:,:,j))*t1) &
                          + sum(v_oovv(:,i,:,:)*t2(:,j,:,:)) - sum(v_oovv(:,i,:,:)*t2(j,:,:,:))
+               !tmp = 0.0_p
+               !do e = 1, nvirt
+               !   do m = 1, nocc
+               !      tmp = tmp + (2*v_oovo(m,i,e,j)-v_oovo(i,m,e,j))*t1(m,e)
+               !      do f = 1, nvirt
+               !         tmp = tmp + (v_oovv(m,i,e,f)-v_oovv(m,i,f,e))*t2(m,j,e,f)
+               !      end do
+               !   end do
+               !end do
+               !I_oo_p(j,i) = tmp
             end do 
          end do
          !$omp end do
@@ -1106,6 +1136,13 @@ module ccsd
                do b = 1, nvirt
                   do j = 1, nocc
                      I_ovov(j,b,i,a) = I_ovov(j,b,i,a) - 0.5*sum(v_oovv(:,i,b,:)*c_oovv(:,j,a,:))
+                     !tmp = 0.0_p
+                     !do e = 1, nvirt
+                     !   do m = 1, nocc
+                     !      tmp = tmp - 0.5*v_oovv(m,i,b,e)*c_oovv(m,j,a,e)
+                     !   end do
+                     !end do
+                     !I_ovov(j,b,i,a) = I_ovov(j,b,i,a) + tmp
                   end do
                end do
             end do 
@@ -1136,27 +1173,40 @@ module ccsd
                do b = 1, nvirt
                   do j = 1, nocc
                      I_voov(b,j,i,a) = v_oovv(j,i,a,b) + sum(v_oovv(:,i,:,b)*(t2(:,j,:,a)-0.5*c_oovv(:,j,a,:))) - &
-                     0.5*sum(v_ovov(:,:,i,b)*t2(:,j,:,a)) + sum(v_vvov(b,:,i,a)*t1(j,:)) - sum(v_oovo(:,i,b,j)*t1(:,a))
+                     0.5*sum(v_ovov(:,:,i,b)*t2(:,j,:,a)) + sum(v_vvov(b,:,i,a)*t1(j,:)) - sum(v_oovo(i,:,b,j)*t1(:,a))
+                     !tmp = 0.0_p
+                     !do e = 1, nvirt
+                     !   tmp = tmp + v_vvov(b,e,i,a)*t1(j,e)
+                     !   do m = 1, nocc
+                     !      tmp = tmp + v_oovv(m,i,e,b)*(t2(m,j,e,a)-0.5*c_oovv(m,j,a,e)) - 0.5* v_ovov(m,e,i,b)*t2(m,j,e,a)
+                     !   end do
+                     !end do
+                     !do m = 1, nocc
+                     !   tmp = tmp - v_oovo(i,m,b,j) * t1(m,a)
+                     !end do
+                     !I_voov(b,j,i,a) = tmp + v_oovv(j,i,a,b)
                   end do
                end do
             end do
          end do
          !$omp end do
 
-         !$omp end parallel
-
          ! ----------------------------------------------------------------
          ! I_ciab' = v_ciab - v_ciam t_mb - t_ma v_cimb
          ! v_ciab = v_vovv = v_vvov(b,a,i,c)
          ! v_ciam = v_vovo = v_ovov(m,a,i,c)
          ! v_cimb = v_voov = v_oovv(m,i,c,b)
-
+         !$omp do collapse(2) schedule(static, 10)
          do b = 1, nvirt
             do a = 1, nvirt
                do i = 1, nocc
                   do c = 1, nvirt
                      I_vovv_p(c,i,a,b) = v_vvov(b,a,i,c) - sum(v_ovov(:,a,i,c)*t1(:,b)) - sum(v_oovv(:,i,c,b)*t1(:,a))
-                     
+                     !tmp = 0.0_p
+                     !do m = 1, nocc
+                     !   tmp = tmp - v_ovov(m,a,i,c)*t1(m,b) - v_oovv(m,i,c,b)*t1(m,a)
+                     !end do
+                     !I_vovv_p(c,i,a,b) = v_vvov(b,a,i,c) + tmp
                   end do
                end do
             end do
@@ -1165,13 +1215,17 @@ module ccsd
          ! ----------------------------------------------------------------
          ! x_bjia = v_beia t_je
          ! v_beia = v_vvov
-         !$omp parallel default(none) shared(sys, cc_amp, cc_int) 
 
          !$omp do collapse(2) schedule(static, 10)
          do a = 1, nvirt
             do i = 1, nocc
                do j = 1, nocc
                   do b = 1, nvirt
+                     !tmp = 0.0_p
+                     !do e = 1, nvirt
+                     !   tmp = tmp + v_vvov(b,e,i,a)*t1(j,e)
+                     !end do
+                     !x_voov(b,j,i,a) = tmp
                      x_voov(b,j,i,a) = sum(v_vvov(b,:,i,a)*t1(j,:))
                   end do
                end do
@@ -1247,6 +1301,13 @@ module ccsd
                ! Hopefully the compiler can cache transpose(I_vo) somewhere so we don't have to create a tmp array
                tmp_t1(i,a) = tmp_t1(i,a) + sum(transpose(I_vo)*asym_t2(:,i,:,a)) &
                            + 2*sum(t1*v_oovv(:,i,:,a)) - sum(t1*v_ovov(:,a,i,:))
+               !tmp = 0.0_dp
+               !do e = 1, nvirt
+               !   do m = 1, nocc
+               !      tmp = tmp + I_vo(e,m)*asym_t2(m,i,e,a) + t1(m,e)*(2*v_oovv(m,i,e,a)-v_ovov(m,a,i,e))
+               !   end do
+               !end do
+               !tmp_t1(i,a) = tmp_t1(i,a) + tmp
             end do
          end do
          !$omp end parallel do
@@ -1306,6 +1367,11 @@ module ccsd
                do j = 1, nocc
                   do i = 1, nocc
                      tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) - sum(t2(:,i,b,a)*I_oo(j,:))
+                     !tmp = 0.0_dp
+                     !do m = 1, nocc
+                     !   tmp = tmp - t2(i,m,a,b)*I_oo(j,m)
+                     !end do
+                     !tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) + tmp
                   end do
                end do
             end do
@@ -1321,23 +1387,24 @@ module ccsd
          call dgemm_wrapper('N','N',nocc**2,nvirt**2,nocc**2,I_oooo,c_oovv,tmp_t2,alpha=0.5_p,beta=1.0_p)
 
          ! ------------------ Eq. 44, terms 6-8 ----------------------------------------------
-         ! -t_mj^ae I_ie^mb - I_ie^ma t_mj^ab + (2t_mi^ea - t_im^ea) I_ej^mb, seems hopeless, use OMP
+         ! -t_mj^ae I_ie^mb - I_ie^ma t_mj^eb + (2t_mi^ea - t_im^ea) I_ej^mb, seems hopeless, use OMP
          !$omp parallel do default(none)&
-         !$omp schedule(static,10) collapse(4)&
-         !$omp shared(sys, cc_amp, cc_int)&
-         !$omp private(tmp)
+         !$omp schedule(static,10) collapse(3)&
+         !$omp shared(sys, cc_amp, cc_int)
          do b = 1, nvirt
             do a = 1, nvirt
                do j = 1, nocc
                   do i = 1, nocc
-                     tmp = 0.0_dp
-                     do e = 1, nvirt
-                        do m = 1, nocc
-                           tmp = tmp - t2(m,j,a,e)*I_ovov(i,e,m,b) - I_ovov(i,e,m,a)*t2(m,j,a,b) &
-                                 + asym_t2(m,i,e,a)*I_voov(e,j,m,b)
-                        end do
-                     end do
-                     tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) + tmp
+                     tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) + sum(-t2(:,j,a,:)*I_ovov(:,:,i,b) - I_ovov(:,:,i,a)*t2(:,j,:,b) &
+                                                      + asym_t2(:,i,:,a)*I_voov(b,:,j,:))
+                     !tmp = 0.0_dp
+                     !do e = 1, nvirt
+                     !   do m = 1, nocc
+                     !      tmp = tmp - t2(m,j,a,e)*I_ovov(i,e,m,b) - I_ovov(i,e,m,a)*t2(m,j,e,b) &
+                     !            + asym_t2(m,i,e,a)*I_voov(e,j,m,b)
+                     !   end do
+                     !end do
+                     !tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) + tmp
                   end do
                end do
             end do
@@ -1350,12 +1417,17 @@ module ccsd
 
          !$omp parallel do default(none)&
          !$omp schedule(static,10) collapse(2)&
-         !$omp shared(sys, cc_amp, cc_int)
+         !$omp shared(sys, cc_amp, cc_int) 
          do b = 1, nvirt
             do a = 1, nvirt
                do j = 1, nocc
                   do i = 1, nocc
                      tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) - sum(t1(:,a)*I_ooov_p(i,j,:,b))
+                     !tmp = 0.0_dp
+                     !do m = 1, nocc
+                     !   tmp = tmp - t1(m,a)*I_ooov_p(i,j,m,b)
+                     !end do
+                     !tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) + tmp
                   end do
                end do
             end do
