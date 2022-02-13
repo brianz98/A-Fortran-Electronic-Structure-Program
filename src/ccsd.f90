@@ -347,7 +347,12 @@ module ccsd
                call move_alloc(cc_amp%t_ia, sys%t1)
                call move_alloc(cc_amp%t_ijab, sys%t2)
                if (sys%calc_type == CCSD_T_spatial) then
-                  continue
+                  call move_alloc(cc_int%v_vvov, int_store%v_vvov)
+                  call move_alloc(cc_int%v_oovo, int_store%v_oovo)
+                  call move_alloc(cc_int%v_oovv, int_store%v_oovv)
+                  deallocate(cc_int%v_ovov, cc_int%v_oooo, cc_int%v_vvvv)
+               else
+                  deallocate(cc_int%v_oovv, cc_int%v_ovov, cc_int%v_vvov, cc_int%v_oovo, cc_int%v_oooo, cc_int%v_vvvv)
                end if
                exit
             end if
@@ -551,9 +556,8 @@ module ccsd
             deallocate(cc_int%D_ia, cc_int%D_ijab)
             deallocate(cc_int%tmp_tia, cc_int%tmp_tijab)
          else
-            deallocate(cc_int%I_vo, cc_int%I_vv, cc_int%I_oo_p, cc_int%I_oo)
+            deallocate(cc_int%I_vo, cc_int%I_vv, cc_int%I_oo_p, cc_int%I_oo, cc_int%asym_t2)
             deallocate(cc_int%c_oovv, cc_int%x_voov, cc_int%I_oooo, cc_int%I_ovov, cc_int%I_voov, cc_int%I_vovv_p, cc_int%I_ooov_p)
-            deallocate(cc_int%asym_t2, cc_int%v_oovv, cc_int%v_ovov, cc_int%v_vvov, cc_int%v_oovo, cc_int%v_oooo, cc_int%v_vvvv)
          end if
       end subroutine
 
@@ -1300,7 +1304,7 @@ module ccsd
             do i = 1, nocc
                ! Hopefully the compiler can cache transpose(I_vo) somewhere so we don't have to create a tmp array
                tmp_t1(i,a) = tmp_t1(i,a) + sum(transpose(I_vo)*asym_t2(:,i,:,a)) &
-                           + 2*sum(t1*v_oovv(:,i,:,a)) - sum(t1*v_ovov(:,a,i,:))
+                           + sum(t1*(2*v_oovv(:,i,:,a) - v_ovov(:,a,i,:)))
                !tmp = 0.0_dp
                !do e = 1, nvirt
                !   do m = 1, nocc
@@ -1336,9 +1340,8 @@ module ccsd
          ! v_efma is type v_vvov, which can be accessed via v_vvov(e,f,m,a), and reshape into (m,e,f,a)
          ! second quantity is the 'asymmetrised t2'(m,i,e,f), which we need to reshape into (i,m,e,f)
          allocate(reshape_tmp1(nocc,nvirt,nvirt,nvirt), reshape_tmp2(nocc,nocc,nvirt,nvirt))
-         reshape_tmp1 = reshape(v_vvov,(/nocc,nvirt,nvirt,nvirt/),order=(/2,3,1,4/))
-         reshape_tmp2 = reshape(asym_t2,(/nocc,nocc,nvirt,nvirt/),order=(/2,1,3,4/))
-         call dgemm_wrapper('N','N',nocc,nvirt,nocc*nvirt**2,reshape_tmp2,reshape_tmp1,tmp_t1,beta=1.0_p)
+         reshape_tmp1 = reshape(v_vvov,(/nocc,nvirt,nvirt,nvirt/),order=(/3,2,1,4/))
+         call dgemm_wrapper('N','N',nocc,nvirt,nocc*nvirt**2,asym_t2,reshape_tmp1,tmp_t1,beta=1.0_p)
 
          ! #########################################################################################################################
          ! ##################################################### T2 Updates ########################################################
@@ -1346,8 +1349,7 @@ module ccsd
 
          ! ------------------ Eq. 44, term 1 -------------------------------------------------
          ! We delay the addition of v_ijab until the end so we can accumulate the entire bracketed quantity in tmp_t2, 
-         ! then apply the permutation directly
-         tmp_t2 = 0.0_dp
+         ! then apply the permutation directly, so there's nothing here
 
          ! We have a permutation operator P(ia/jb), after v_ij^ab, meaning i becomes j and a becomes b, 
          ! and conveniently what we actually need to do to perform the action of the permutation is to just reshape
@@ -1355,7 +1357,7 @@ module ccsd
 
          ! ------------------ Eq. 44, term 2 -------------------------------------------------
          ! t_ij^ae*I_e^b, a nice dgemm
-         call dgemm_wrapper('N','N',nocc**2*nvirt,nvirt,nvirt,t2,I_vv,tmp_t2,beta=1.0_dp)
+         call dgemm_wrapper('N','N',nocc**2*nvirt,nvirt,nvirt,t2,I_vv,tmp_t2)
 
          ! ------------------ Eq. 44, term 3 -------------------------------------------------
          ! -t_im^ab*I_j^m, benchmarking shows naive OMP is the fastest
@@ -1390,21 +1392,21 @@ module ccsd
          ! -t_mj^ae I_ie^mb - I_ie^ma t_mj^eb + (2t_mi^ea - t_im^ea) I_ej^mb, seems hopeless, use OMP
          !$omp parallel do default(none)&
          !$omp schedule(static,10) collapse(3)&
-         !$omp shared(sys, cc_amp, cc_int)
+         !$omp shared(sys, cc_amp, cc_int) private(tmp)
          do b = 1, nvirt
             do a = 1, nvirt
                do j = 1, nocc
                   do i = 1, nocc
-                     tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) + sum(-t2(:,j,a,:)*I_ovov(:,:,i,b) - I_ovov(:,:,i,a)*t2(:,j,:,b) &
-                                                      + asym_t2(:,i,:,a)*I_voov(b,:,j,:))
-                     !tmp = 0.0_dp
-                     !do e = 1, nvirt
-                     !   do m = 1, nocc
-                     !      tmp = tmp - t2(m,j,a,e)*I_ovov(i,e,m,b) - I_ovov(i,e,m,a)*t2(m,j,e,b) &
-                     !            + asym_t2(m,i,e,a)*I_voov(e,j,m,b)
-                     !   end do
-                     !end do
-                     !tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) + tmp
+                     !tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) + sum(-t2(:,j,a,:)*I_ovov(:,:,i,b) - I_ovov(:,:,i,a)*t2(:,j,:,b) &
+                     !                                 + asym_t2(:,i,:,a)*I_voov(b,:,j,:))
+                     tmp = 0.0_dp
+                     do e = 1, nvirt
+                        do m = 1, nocc
+                           tmp = tmp - t2(m,j,a,e)*I_ovov(i,e,m,b) - I_ovov(i,e,m,a)*t2(m,j,e,b) &
+                                 + asym_t2(m,i,e,a)*I_voov(e,j,m,b)
+                        end do
+                     end do
+                     tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) + tmp
                   end do
                end do
             end do
@@ -1627,25 +1629,25 @@ module ccsd
          !$omp end do
          !$omp end parallel
          sys%e_ccsd_t = e_T
-         write(iunit, '(1X, A, 1X, F15.9)') 'CCSD(T) correlation energy (Hartree):', e_T
+         write(iunit, '(1X, A, 1X, F15.9)') 'Unrestricted CCSD(T) correlation energy (Hartree):', e_T
          end associate
       end subroutine do_ccsd_t_spinorb
 
       subroutine do_ccsd_t_spatial(sys, int_store)
-         ! Spinorbital formuation of CCSD(T)
-         ! In:
-         !     int_store: integral information.
+         ! Spatial formuation of CCSD(T) according to Piecuch et al.
          ! In/out:
          !     sys: holds converged amplitudes from CCSD
+         !     int_store: integral information.
 
          use integrals, only: int_store_t
          use error_handling, only: check_allocate
 
          type(system_t), intent(inout) :: sys
-         type(int_store_t), intent(in) :: int_store
+         type(int_store_t), intent(inout) :: int_store
 
          integer :: i, j, k, a, b, c, f, m, ierr
-         real(p), allocatable :: tmp_t3d(:,:,:), tmp_t3c(:,:,:), tmp_t3c_d(:,:,:)
+         real(p), dimension(:,:,:), allocatable :: tmp_t3_D, tmp_t3, z3, t_bar, reshape_tmp
+         real(p), dimension(:,:,:,:), allocatable :: t2_reshape, v_vovv, v_ovoo
          real(p) :: e_T
          integer, parameter :: iunit = 6
 
@@ -1653,70 +1655,87 @@ module ccsd
          write(iunit, '(1X, A)') 'CCSD(T)'
          write(iunit, '(1X, 10("-"))')
 
-         associate(nbasis=>sys%nbasis, nocc=>sys%nocc, e=>sys%canon_levels_spinorb, t1=>sys%t1, t2=>sys%t2,&
-                   asym=>int_store%asym_spinorb)
-         !$omp parallel default(none) &
-         !$omp private(i, j, k, a, b, c, f, m, tmp_t3d, tmp_t3c, tmp_t3c_d, ierr) &
-         !$omp shared(sys, int_store, e_T)
+         associate(nvirt=>sys%nvirt, nocc=>sys%nocc, e=>sys%canon_levels, t1=>sys%t1, t2=>sys%t2,&
+                   v_oovv=>int_store%v_oovv,v_vvov=>int_store%v_vvov,v_oovo=>int_store%v_oovo)
+
+         ! For efficient cache access during tmp_t3c updates
+         allocate(t2_reshape(nvirt,nvirt,nocc,nocc), source=0.0_p, stat=ierr)
+         call check_allocate('t2_reshape', (nvirt*nocc)**2, ierr)
+         ! ijab -> baij
+         t2_reshape = reshape(t2, shape(t2_reshape), order=(/4,3,2,1/))
+
+         allocate(v_vovv(nvirt,nocc,nvirt,nvirt),source=0.0_dp,stat=ierr)
+         call check_allocate('v_vovv', nocc*nvirt**3, ierr)
+         v_vovv = reshape(v_vvov,shape(v_vovv),order=(/4,3,2,1/))
+         deallocate(int_store%v_vvov)
+
+         allocate(v_ovoo(nocc,nvirt,nocc,nocc),source=0.0_dp,stat=ierr)
+         call check_allocate('v_ovoo', nocc**3*nvirt, ierr)
+         v_ovoo = reshape(v_oovo,shape(v_ovoo),order=(/4,3,2,1/))
+         deallocate(int_store%v_oovo)
+
          e_T = 0.0_p
+
+         !$omp parallel default(none) &
+         !$omp private(tmp_t3_D, tmp_t3, z3, t_bar, ierr, reshape_tmp) &
+         !$omp shared(sys, int_store, t2_reshape, v_vovv, v_ovoo) reduction(+:e_T)
          
          ! Declare heap-allocated arrays inside parallel region
-         allocate(tmp_t3d(2*nocc+1:2*nbasis,2*nocc+1:2*nbasis,2*nocc+1:2*nbasis), source=0.0_p, stat=ierr)
-         call check_allocate('tmp_t3d', 8*(nbasis-nocc)**3, ierr)
-         allocate(tmp_t3c(2*nocc+1:2*nbasis,2*nocc+1:2*nbasis,2*nocc+1:2*nbasis), source=0.0_p, stat=ierr)
-         call check_allocate('tmp_t3c', 8*(nbasis-nocc)**3, ierr)
-         allocate(tmp_t3c_d(2*nocc+1:2*nbasis,2*nocc+1:2*nbasis,2*nocc+1:2*nbasis), source=0.0_p, stat=ierr)
-         call check_allocate('tmp_t3c_d', 8*(nbasis-nocc)**3, ierr)
+         allocate(tmp_t3_D(nvirt,nvirt,nvirt), source=0.0_p, stat=ierr)
+         call check_allocate('tmp_t3_D', nvirt**3, ierr)
+         allocate(tmp_t3(nvirt,nvirt,nvirt), source=0.0_p, stat=ierr)
+         call check_allocate('tmp_t3', nvirt**3, ierr)
+         allocate(z3(nvirt,nvirt,nvirt), source=0.0_p, stat=ierr)
+         call check_allocate('z3', nvirt**3, ierr)
+         allocate(t_bar(nvirt,nvirt,nvirt), source=0.0_p, stat=ierr)
+         call check_allocate('t_bar', nvirt**3, ierr)
+         allocate(reshape_tmp(nvirt,nvirt,nvirt), source=0.0_p, stat=ierr)
+         call check_allocate('reshape_tmp', nvirt**3, ierr)
 
          ! We use avoid the storage of full triples (six-dimensional array..) and instead use the strategy of 
          ! batched triples storage, denoted W^{ijk}(abc) in (https://doi.org/10.1016/0009-2614(91)87003-T).
          ! We could of course only compute one element in a loop iteration but that will probably result in bad floating point
          ! performance, here for each thread/loop iteration we use the Fortran intrinsic sum, 
          ! instead of all relying on OMP reduction, to hopefully give better floating point performance.
-         !$omp do schedule(static, 10) collapse(3) reduction(+:e_T)
-         do i = 1, 2*nocc
-            do j = 1, 2*nocc
-               do k = 1, 2*nocc
-                  ! Compute T3 amplitudes                  
-                  do a = 2*nocc+1, 2*nbasis
-                     do b = 2*nocc+1, 2*nbasis
-                        do c = 2*nocc+1, 2*nbasis
-                           ! Disonnected T3: D_{ijk}^{abc}*t_{ijk}^{abc}(d) = P(i/jk)P(a/bc)t_i^a*<jk||bc>
-                           ! Can be rewritten directly as no sums in the expression
-                           tmp_t3d(a,b,c) = - t1(i,a)*asym(c,b,j,k) + t1(j,a)*asym(c,b,i,k) + t1(k,a)*asym(c,b,j,i) &
-                                            + t1(i,b)*asym(c,a,j,k) - t1(j,b)*asym(c,a,i,k) - t1(k,b)*asym(c,a,j,i) &
-                                            - t1(i,c)*asym(j,k,b,a) + t1(j,c)*asym(i,k,b,a) + t1(k,c)*asym(j,i,b,a)
-                           tmp_t3d(a,b,c) = tmp_t3d(a,b,c)/(e(i)+e(j)+e(k)-e(a)-e(b)-e(c))               
 
-                           ! Connected T3: D_{ijk}^{abc}*t_{ijk}^{abc}(c) = P(i/jk)P(a/bc)[\sum_f t_jk^af <fi||bc> - \sum_m t_im^bc <ma||jk>]
-                           ! Has to be zeroed as all terms are sums
-                           tmp_t3c(a,b,c) = 0.0_p
-                           do f = 2*nocc+1, 2*nbasis
-                              tmp_t3c(a,b,c) = tmp_t3c(a,b,c) &
-                                             + t2(k,j,f,a)*asym(f,i,b,c) - t2(k,i,f,a)*asym(f,j,b,c) - t2(i,j,f,a)*asym(f,k,b,c) &
-                                             - t2(k,j,f,b)*asym(f,i,a,c) + t2(k,i,f,b)*asym(f,j,a,c) + t2(i,j,f,b)*asym(f,k,a,c) &
-                                             - t2(k,j,f,c)*asym(f,i,b,a) + t2(k,i,f,c)*asym(f,j,b,a) + t2(i,j,f,c)*asym(f,k,b,a)
-                           end do
-                           do m = 1, 2*nocc
-                              tmp_t3c(a,b,c) = tmp_t3c(a,b,c) &
-                                             - t2(m,i,c,b)*asym(m,a,j,k) + t2(m,j,c,b)*asym(m,a,i,k) + t2(m,k,c,b)*asym(m,a,j,i) &
-                                             + t2(m,i,c,a)*asym(m,b,j,k) - t2(m,j,c,a)*asym(m,b,i,k) - t2(m,k,c,a)*asym(m,b,j,i) &
-                                             + t2(m,i,a,b)*asym(m,c,j,k) - t2(m,j,a,b)*asym(m,c,i,k) - t2(m,k,a,b)*asym(m,c,j,i)
-                           end do
-                           tmp_t3c_d(a,b,c) = tmp_t3c(a,b,c)/(e(i)+e(j)+e(k)-e(a)-e(b)-e(c))
+         ! Based on Eqs. 55-56 and 60, we need three arrays, z3 (z_abc^ijk), t3 (t_ijk^abc(2)), and t3_D (t_ijk^abc(2)*D_ijk^abc)
+         ! Eq. 52: E(T) = (t_bar_abc^ijk + z_abc^ijk) t_ijk^abc(2) D_ijk^abc
+         ! t_bar_abcijk = 4/3 t_ijkabc -2t_ijkacb + 2/3 t_ijkbca
+         ! However, as all indices are contracted, the ordering of the indices doesn't matter
+         !$omp do schedule(static, 10) collapse(3)
+         do i = 1, nocc
+            do j = 1, nocc
+               do k = 1, nocc
+                  ! Compute batched T3 amplitudes
+                  do a = 1, nvirt
+                     do b = 1, nvirt
+                        do c = 1, nvirt
+                           tmp_t3_D(a,b,c) = sum(t2_reshape(:,a,j,i)*v_vovv(:,k,b,c)) - sum(t2(:,i,b,a)*v_ovoo(:,c,j,k)) + &
+                                             sum(t2_reshape(:,b,i,j)*v_vovv(:,k,a,c)) - sum(t2(:,j,a,b)*v_ovoo(:,c,i,k)) + &
+                                             sum(t2_reshape(:,c,j,k)*v_vovv(:,i,b,a)) - sum(t2(:,k,b,c)*v_ovoo(:,a,j,i)) + &
+                                             sum(t2_reshape(:,a,k,i)*v_vovv(:,j,c,b)) - sum(t2(:,i,c,a)*v_ovoo(:,b,k,j)) + &
+                                             sum(t2_reshape(:,b,k,j)*v_vovv(:,i,c,a)) - sum(t2(:,j,c,b)*v_ovoo(:,a,k,i)) + &
+                                             sum(t2_reshape(:,c,i,k)*v_vovv(:,j,a,b)) - sum(t2(:,k,a,c)*v_ovoo(:,b,i,j))
+                           tmp_t3(a,b,c) = tmp_t3_D(a,b,c)/(e(i)+e(j)+e(k)-e(a+nocc)-e(b+nocc)-e(c+nocc))
+                           z3(a,b,c) = (t1(i,a)*v_oovv(j,k,b,c) + t1(j,b)*v_oovv(i,k,a,c) + t1(k,c)*v_oovv(i,j,a,b)) &
+                                       /(e(i)+e(j)+e(k)-e(a+nocc)-e(b+nocc)-e(c+nocc))
                         end do
                      end do
                   end do
-                  
-                  ! Calculate contributions
-                  e_T = e_T + sum(tmp_t3c*(tmp_t3c_d+tmp_t3d))/36
+                  ! Do reshapes for t_bar
+                  t_bar = 4*tmp_t3/3
+                  reshape_tmp = reshape(tmp_t3,shape(t_bar),order=(/1,3,2/))
+                  t_bar = t_bar - 2*reshape_tmp
+                  reshape_tmp = reshape(tmp_t3,shape(t_bar),order=(/3,1,2/))
+                  t_bar = t_bar + 2*reshape_tmp/3
+                  e_T = e_T + sum((t_bar + z3)*tmp_t3_D)
                end do
             end do
          end do
          !$omp end do
          !$omp end parallel
          sys%e_ccsd_t = e_T
-         write(iunit, '(1X, A, 1X, F15.9)') 'CCSD(T) correlation energy (Hartree):', e_T
+         write(iunit, '(1X, A, 1X, F15.9)') 'Restricted CCSD(T) correlation energy (Hartree):', e_T
          end associate
       end subroutine do_ccsd_t_spatial
 
