@@ -276,7 +276,7 @@ module ccsd
 
          use integrals, only: int_store_t, eri_ind
          use error_handling, only: error, check_allocate
-         use system, only: state_t, CCSD_T_spatial, CCSD_TT_spatial
+         use system, only: state_t, CCSD_T_spatial, CCSD_TT_spatial, RCCSD_T_spatial, RCCSD_TT_spatial
 
          type(system_t), intent(inout) :: sys
          type(int_store_t), intent(inout) :: int_store
@@ -353,7 +353,7 @@ module ccsd
                sys%e_ccsd = st%energy
                call move_alloc(cc_amp%t_ia, sys%t1)
                call move_alloc(cc_amp%t_ijab, sys%t2)
-               if (sys%calc_type == CCSD_T_spatial .or. sys%calc_type == CCSD_TT_spatial) then
+               if (any(sys%calc_type == (/CCSD_T_spatial, CCSD_TT_spatial, RCCSD_T_spatial, RCCSD_TT_spatial/))) then
                   call move_alloc(cc_int%v_vvov, int_store%v_vvov)
                   call move_alloc(cc_int%v_oovo, int_store%v_oovo)
                   call move_alloc(cc_int%v_oovv, int_store%v_oovv)
@@ -1292,9 +1292,9 @@ module ccsd
             v_oovv=>cc_int%v_oovv, v_ovov=>cc_int%v_ovov, v_vvov=>cc_int%v_vvov, v_vvvv=>cc_int%v_vvvv, v_oooo=>cc_int%v_oooo, &
             v_oovo=>cc_int%v_oovo, asym_t2=>cc_int%asym_t2, c_oovv=>cc_int%c_oovv, x_voov=>cc_int%x_voov)
 
-         ! #########################################################################################################################
-         ! ##################################################### T1 Updates ########################################################
-         ! #########################################################################################################################
+         ! ###################################################################################
+         ! ############################### T1 Updates ########################################
+         ! ###################################################################################
 
          ! ------------------ Eq. 43, terms 2-3 ----------------------------------------------
          ! t_ie * I_ea -I'_im * t_ma, simple matmuls
@@ -1350,9 +1350,9 @@ module ccsd
          reshape_tmp1 = reshape(v_vvov,(/nocc,nvirt,nvirt,nvirt/),order=(/3,2,1,4/))
          call dgemm_wrapper('N','N',nocc,nvirt,nocc*nvirt**2,asym_t2,reshape_tmp1,tmp_t1,beta=1.0_p)
 
-         ! #########################################################################################################################
-         ! ##################################################### T2 Updates ########################################################
-         ! #########################################################################################################################         
+         ! ###################################################################################
+         ! ############################### T2 Updates ########################################
+         ! ###################################################################################         
 
          ! ------------------ Eq. 44, term 1 -------------------------------------------------
          ! We delay the addition of v_ijab until the end so we can accumulate the entire bracketed quantity in tmp_t2, 
@@ -1640,27 +1640,26 @@ module ccsd
          end associate
       end subroutine do_ccsd_t_spinorb
 
-      subroutine do_ccsd_t_spatial(sys, int_store, ct)
+      subroutine do_ccsd_t_spatial(sys, int_store)
          ! Spatial formuation of CCSD(T) according to Piecuch et al.
-         ! In: 
-         !     ct: Calculation type: are we doing CCSD(T) or CCSD[T]?
          ! In/out:
          !     sys: holds converged amplitudes from CCSD
          !     int_store: integral information.
 
-         use system, only: CCSD_T_spatial, CCSD_TT_spatial
+         use system, only: CCSD_T_spatial, CCSD_TT_spatial, RCCSD_T_spatial, RCCSD_TT_spatial
          use integrals, only: int_store_t
          use error_handling, only: check_allocate
 
-         integer, intent(in) :: ct
          type(system_t), intent(inout) :: sys
          type(int_store_t), intent(inout) :: int_store
 
-         integer :: i, j, k, a, b, c, f, m, ierr, x
-         real(p), dimension(:,:,:), allocatable :: tmp_t3_D, tmp_t3, z3, t_bar, reshape_tmp
-         real(p), dimension(:,:,:,:), allocatable :: t2_reshape, v_vovv, v_ovoo
-         real(p) :: e_T
+         integer :: i, j, k, a, b, c, f, m, ierr
+         logical :: doing_T, doing_R
+         real(p), dimension(:,:,:), allocatable :: tmp_t3_D, tmp_t3, z3, t_bar, reshape_tmp, tmp_y, z3_bar
+         real(p), dimension(:,:,:,:), allocatable :: t2_reshape, v_vovv, v_ovoo, asym_t2, c_oovv
+         real(p) :: e_T, D_T
          integer, parameter :: iunit = 6
+         character(80) :: calcname
 
          write(iunit, '(1X, 10("-"))')
          write(iunit, '(1X, A)') 'CCSD(T)'
@@ -1686,31 +1685,71 @@ module ccsd
          v_ovoo = reshape(v_oovo,shape(v_ovoo),order=(/4,3,2,1/))
          deallocate(int_store%v_oovo)
 
-         ! To facilitate branchless programming, and the fact that the only difference between
-         ! CCSD(T) and CCSD[T] is that the former has a few additional terms
-         if (ct == CCSD_T_spatial) then
-            x = 0
-         else if (ct == CCSD_TT_spatial) then
-            x = 1
+         ! ############################ (R)CCSD(T) or [T] #################################
+         doing_T = .false.
+         doing_R = .false.
+
+         ! To facilitate code reuse, the only difference between
+         ! (R)CCSD(T) and (R)CCSD[T] is that the former has a few additional terms and (R) only needs to accumulate some additional
+         ! terms in the denominator
+         if (any(sys%calc_type == (/CCSD_T_spatial, RCCSD_T_spatial/))) doing_T = .true.
+
+         if (any(sys%calc_type == (/RCCSD_TT_spatial, RCCSD_T_spatial/))) doing_R = .true.
+
+         if (doing_R) then
+            allocate(asym_t2(nocc,nocc,nvirt,nvirt), source=0.0_p, stat=ierr)
+            call check_allocate('asym_t2', (nocc*nvirt)**2, ierr)
+            asym_t2 = reshape(t2,shape(asym_t2),order=(/2,1,3,4/))
+            asym_t2 = -asym_t2 + 2*t2
+
+            allocate(c_oovv(nocc,nocc,nvirt,nvirt), source=0.0_p, stat=ierr)
+            call check_allocate('c_oovv', (nocc*nvirt)**2, ierr)
+            c_oovv = t2 
          end if
 
          e_T = 0.0_p
+         D_T = 0.0_p
+         
 
          !$omp parallel default(none) &
-         !$omp private(tmp_t3_D, tmp_t3, z3, t_bar, ierr, reshape_tmp) &
-         !$omp shared(sys, int_store, t2_reshape, v_vovv, v_ovoo, x) reduction(+:e_T)
-         
+         !$omp private(tmp_t3_D, tmp_t3, z3, z3_bar, tmp_y, t_bar, ierr, reshape_tmp) &
+         !$omp shared(sys, int_store, t2_reshape, v_vovv, v_ovoo, doing_T, doing_R, c_oovv, e_T, D_T) 
+
+         if (doing_R) then
+            !$omp do collapse(2) schedule(static, 10)
+            do b = 1, nvirt
+               do a = 1, nvirt
+                  do j = 1, nocc
+                     do i = 1, nocc
+                        c_oovv(i,j,a,b) = c_oovv(i,j,a,b) + t1(i,a)*t1(j,b)
+                     end do
+                  end do
+               end do
+            end do
+            !$omp end do
+         end if
+
          ! Declare heap-allocated arrays inside parallel region
          allocate(tmp_t3_D(nvirt,nvirt,nvirt), source=0.0_p, stat=ierr)
          call check_allocate('tmp_t3_D', nvirt**3, ierr)
          allocate(tmp_t3(nvirt,nvirt,nvirt), source=0.0_p, stat=ierr)
          call check_allocate('tmp_t3', nvirt**3, ierr)
-         allocate(z3(nvirt,nvirt,nvirt), source=0.0_p, stat=ierr)
-         call check_allocate('z3', nvirt**3, ierr)
-         allocate(t_bar(nvirt,nvirt,nvirt), source=0.0_p, stat=ierr)
-         call check_allocate('t_bar', nvirt**3, ierr)
          allocate(reshape_tmp(nvirt,nvirt,nvirt), source=0.0_p, stat=ierr)
          call check_allocate('reshape_tmp', nvirt**3, ierr)
+
+         if (doing_T) then
+            allocate(z3(nvirt,nvirt,nvirt), source=0.0_p, stat=ierr)
+            call check_allocate('z3', nvirt**3, ierr)
+            allocate(t_bar(nvirt,nvirt,nvirt), source=0.0_p, stat=ierr)
+            call check_allocate('t_bar', nvirt**3, ierr)
+         end if
+         
+         if (doing_R) then
+            allocate(tmp_y(nvirt,nvirt,nvirt), source=0.0_p, stat=ierr)
+            call check_allocate('tmp_y', nvirt**3, ierr)
+            allocate(z3_bar(nvirt,nvirt,nvirt), source=0.0_p, stat=ierr)
+            call check_allocate('z3_bar', nvirt**3, ierr)
+         end if
 
          ! We use avoid the storage of full triples (six-dimensional array..) and instead use the strategy of 
          ! batched triples storage, denoted W^{ijk}(abc) in (https://doi.org/10.1016/0009-2614(91)87003-T).
@@ -1722,7 +1761,7 @@ module ccsd
          ! Eq. 52: E(T) = (t_bar_abc^ijk + z_abc^ijk) t_ijk^abc(2) D_ijk^abc
          ! t_bar_abcijk = 4/3 t_ijkabc -2t_ijkacb + 2/3 t_ijkbca
          ! However, as all indices are contracted, the ordering of the indices doesn't matter
-         !$omp do schedule(static, 10) collapse(3)
+         !$omp do schedule(static, 10) collapse(3) reduction(+:e_T, D_T)
          do i = 1, nocc
             do j = 1, nocc
                do k = 1, nocc
@@ -1737,8 +1776,15 @@ module ccsd
                                              sum(t2_reshape(:,b,k,j)*v_vovv(:,i,c,a)) - sum(t2(:,j,c,b)*v_ovoo(:,a,k,i)) + &
                                              sum(t2_reshape(:,c,i,k)*v_vovv(:,j,a,b)) - sum(t2(:,k,a,c)*v_ovoo(:,b,i,j))
                            tmp_t3(a,b,c) = tmp_t3_D(a,b,c)/(e(i)+e(j)+e(k)-e(a+nocc)-e(b+nocc)-e(c+nocc))
-                           z3(a,b,c) = (t1(i,a)*v_oovv(j,k,b,c) + t1(j,b)*v_oovv(i,k,a,c) + t1(k,c)*v_oovv(i,j,a,b)) &
-                                       /(e(i)+e(j)+e(k)-e(a+nocc)-e(b+nocc)-e(c+nocc))
+                           if (doing_T) then
+                              z3(a,b,c) = (t1(i,a)*v_oovv(j,k,b,c) + t1(j,b)*v_oovv(i,k,a,c) + &
+                                           t1(k,c)*v_oovv(i,j,a,b))/(e(i)+e(j)+e(k)-e(a+nocc)-e(b+nocc)-e(c+nocc))
+                           end if
+                           if (doing_R) then
+                              ! The 'y' array as defined in eq. 66 of Piecuch
+                              tmp_y(a,b,c) = t1(i,a)*t1(j,b)*t1(k,c) + t1(i,a)*t2(j,k,b,c) + &
+                                             t1(j,b)*t2(i,k,a,c) + t1(k,c)*t2(i,j,a,b)
+                           end if
                         end do
                      end do
                   end do
@@ -1748,17 +1794,56 @@ module ccsd
                   t_bar = t_bar - 2*reshape_tmp
                   reshape_tmp = reshape(tmp_t3,shape(t_bar),order=(/3,1,2/))
                   t_bar = t_bar + 2*reshape_tmp/3
-                  e_T = e_T + sum((t_bar + (1-x)*z3)*tmp_t3_D)
+                  
+                  ! If doing renormalised CCSD(T)/[T], do the same reshapes for z_bar
+                  if (doing_T .and. doing_R) then
+                     ! RCCSD(T) involves z3_bar whereas RCCSD[T] does not
+                     ! If we're doing RCCSD(T)
+                     z3_bar = 4*z3/3
+                     reshape_tmp = reshape(z3,shape(z3_bar),order=(/1,3,2/))
+                     z3_bar = z3_bar - 2*reshape_tmp
+                     reshape_tmp = reshape(z3,shape(z3_bar),order=(/3,1,2/))
+                     z3_bar = z3_bar + 2*reshape_tmp/3
+                     D_T = D_T + sum((t_bar + z3_bar)*tmp_y)
+                     e_T = e_T + sum((t_bar + z3)*tmp_t3_D)
+                  else if (doing_R) then
+                     ! If we're doing RCCSD[T]
+                     D_T = D_T + sum(t_bar*tmp_y)
+                     e_T = e_T + sum(t_bar*tmp_t3_D)
+                  else if (doing_T) then
+                     ! CCSD(T)
+                     e_T = e_T + sum((t_bar + z3)*tmp_t3_D)
+                  else
+                     ! CCSD[T]
+                     e_T = e_T + sum(t_bar*tmp_t3_D)
+                  end if
                end do
             end do
          end do
          !$omp end do
          !$omp end parallel
-         sys%e_ccsd_t = e_T
-         if (ct == CCSD_T_spatial) then
-            write(iunit, '(1X, A, 1X, F15.9)') 'Restricted CCSD(T) correlation energy (Hartree):', e_T
-         else if (ct == CCSD_TT_spatial) then
-            write(iunit, '(1X, A, 1X, F15.9)') 'Restricted CCSD[T] correlation energy (Hartree):', e_T
+         
+         if (doing_R) then
+            D_T = D_T + 1 + 2*sum(t1**2) + sum(asym_t2*c_oovv)
+         end if
+
+         select case(sys%calc_type)
+         case(CCSD_T_spatial)
+            calcname = 'CCSD(T)'
+         case(CCSD_TT_spatial)
+            calcname = 'CCSD[T]'
+         case(RCCSD_T_spatial)
+            calcname = 'RCCSD(T)'
+         case(RCCSD_TT_spatial)
+            calcname = 'RCCSD[T]'
+         end select
+
+         if (any(sys%calc_type == (/CCSD_T_spatial, CCSD_TT_spatial/))) then
+            write(iunit, '(1X, A, 1X, F15.9)') 'Restricted '//trim(calcname)//' correlation energy (Hartree):', e_T
+            sys%e_ccsd_t = e_T
+         else
+            write(iunit, '(1X, A, 1X, F15.9)') 'Restricted '//trim(calcname)//' correlation energy (Hartree):', e_T/D_T
+            sys%e_ccsd_t = e_T/D_T
          end if
          end associate
       end subroutine do_ccsd_t_spatial

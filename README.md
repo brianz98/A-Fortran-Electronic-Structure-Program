@@ -20,8 +20,8 @@ The end goal of this project will be performing HF, MP2, CCSD, and CCSD(T), as p
 - [X] Spin-free CCSD
 - [X] Spin-free CCSD(T)
 - [X] Spin-free CCSD[T]
-- [ ] Renormalised CCSD[T]
-- [ ] Renormalised CCSD(T)
+- [X] Renormalised CCSD[T]
+- [X] Renormalised CCSD(T)
 - [ ] Completely renormalised CCSD[T]
 - [ ] Completely renormalised CCSD(T)
 - [ ] Loop optimisations - using permutational symmetry
