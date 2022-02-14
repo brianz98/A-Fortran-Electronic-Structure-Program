@@ -19,9 +19,11 @@ The end goal of this project will be performing HF, MP2, CCSD, and CCSD(T), as p
 - [X] BLAS acceleration of tensor contractions
 - [X] Spin-free CCSD
 - [X] Spin-free CCSD(T)
-- [ ] Renormalised and completely renormalised CCSD(T)
-- [ ] Spin-free CCSD[T]
-- [ ] (C)R CCSD[T]
+- [X] Spin-free CCSD[T]
+- [ ] Renormalised CCSD[T]
+- [ ] Renormalised CCSD(T)
+- [ ] Completely renormalised CCSD[T]
+- [ ] Completely renormalised CCSD(T)
 - [ ] Loop optimisations - using permutational symmetry
 - [ ] Adapting Hartree-Fock with symmetry
 - [ ] Ditto for MP2

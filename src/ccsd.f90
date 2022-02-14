@@ -276,7 +276,7 @@ module ccsd
 
          use integrals, only: int_store_t, eri_ind
          use error_handling, only: error, check_allocate
-         use system, only: state_t, CCSD_T_spatial
+         use system, only: state_t, CCSD_T_spatial, CCSD_TT_spatial
 
          type(system_t), intent(inout) :: sys
          type(int_store_t), intent(inout) :: int_store
@@ -353,7 +353,7 @@ module ccsd
                sys%e_ccsd = st%energy
                call move_alloc(cc_amp%t_ia, sys%t1)
                call move_alloc(cc_amp%t_ijab, sys%t2)
-               if (sys%calc_type == CCSD_T_spatial) then
+               if (sys%calc_type == CCSD_T_spatial .or. sys%calc_type == CCSD_TT_spatial) then
                   call move_alloc(cc_int%v_vvov, int_store%v_vvov)
                   call move_alloc(cc_int%v_oovo, int_store%v_oovo)
                   call move_alloc(cc_int%v_oovv, int_store%v_oovv)
@@ -1551,7 +1551,7 @@ module ccsd
 
          integer :: i, j, k, a, b, c, f, m, ierr
          real(p), dimension(:,:,:), allocatable :: tmp_t3d, tmp_t3c, tmp_t3c_d, reshape_tmp1, reshape_tmp2, t2_reshape(:,:,:,:)
-         real(p) :: e_T
+         real(p) :: e_T, e_TT
          integer, parameter :: iunit = 6
 
          write(iunit, '(1X, 10("-"))')
@@ -1640,19 +1640,23 @@ module ccsd
          end associate
       end subroutine do_ccsd_t_spinorb
 
-      subroutine do_ccsd_t_spatial(sys, int_store)
+      subroutine do_ccsd_t_spatial(sys, int_store, ct)
          ! Spatial formuation of CCSD(T) according to Piecuch et al.
+         ! In: 
+         !     ct: Calculation type: are we doing CCSD(T) or CCSD[T]?
          ! In/out:
          !     sys: holds converged amplitudes from CCSD
          !     int_store: integral information.
 
+         use system, only: CCSD_T_spatial, CCSD_TT_spatial
          use integrals, only: int_store_t
          use error_handling, only: check_allocate
 
+         integer, intent(in) :: ct
          type(system_t), intent(inout) :: sys
          type(int_store_t), intent(inout) :: int_store
 
-         integer :: i, j, k, a, b, c, f, m, ierr
+         integer :: i, j, k, a, b, c, f, m, ierr, x
          real(p), dimension(:,:,:), allocatable :: tmp_t3_D, tmp_t3, z3, t_bar, reshape_tmp
          real(p), dimension(:,:,:,:), allocatable :: t2_reshape, v_vovv, v_ovoo
          real(p) :: e_T
@@ -1682,11 +1686,19 @@ module ccsd
          v_ovoo = reshape(v_oovo,shape(v_ovoo),order=(/4,3,2,1/))
          deallocate(int_store%v_oovo)
 
+         ! To facilitate branchless programming, and the fact that the only difference between
+         ! CCSD(T) and CCSD[T] is that the former has a few additional terms
+         if (ct == CCSD_T_spatial) then
+            x = 0
+         else if (ct == CCSD_TT_spatial) then
+            x = 1
+         end if
+
          e_T = 0.0_p
 
          !$omp parallel default(none) &
          !$omp private(tmp_t3_D, tmp_t3, z3, t_bar, ierr, reshape_tmp) &
-         !$omp shared(sys, int_store, t2_reshape, v_vovv, v_ovoo) reduction(+:e_T)
+         !$omp shared(sys, int_store, t2_reshape, v_vovv, v_ovoo, x) reduction(+:e_T)
          
          ! Declare heap-allocated arrays inside parallel region
          allocate(tmp_t3_D(nvirt,nvirt,nvirt), source=0.0_p, stat=ierr)
@@ -1736,14 +1748,18 @@ module ccsd
                   t_bar = t_bar - 2*reshape_tmp
                   reshape_tmp = reshape(tmp_t3,shape(t_bar),order=(/3,1,2/))
                   t_bar = t_bar + 2*reshape_tmp/3
-                  e_T = e_T + sum((t_bar + z3)*tmp_t3_D)
+                  e_T = e_T + sum((t_bar + (1-x)*z3)*tmp_t3_D)
                end do
             end do
          end do
          !$omp end do
          !$omp end parallel
          sys%e_ccsd_t = e_T
-         write(iunit, '(1X, A, 1X, F15.9)') 'Restricted CCSD(T) correlation energy (Hartree):', e_T
+         if (ct == CCSD_T_spatial) then
+            write(iunit, '(1X, A, 1X, F15.9)') 'Restricted CCSD(T) correlation energy (Hartree):', e_T
+         else if (ct == CCSD_TT_spatial) then
+            write(iunit, '(1X, A, 1X, F15.9)') 'Restricted CCSD[T] correlation energy (Hartree):', e_T
+         end if
          end associate
       end subroutine do_ccsd_t_spatial
 

@@ -5,6 +5,7 @@ module system
 
    enum, bind(c)
       enumerator :: RHF, UHF, MP2_spinorb, MP2_spatial, CCSD_spinorb, CCSD_spatial, CCSD_T_spinorb, CCSD_T_spatial
+      enumerator :: CCSD_TT_spatial
    end enum
 
    type system_t
@@ -115,6 +116,9 @@ module system
                 case("CCSD(T)_spatial")
                     sys%calc_type = CCSD_T_spatial
                     sys%restricted = .true.
+                case("CCSD[T]_spatial")
+                    sys%calc_type = CCSD_TT_spatial
+                    sys%restricted = .true.  
                 case default
                     call error('system::read_system_in', 'Unrecognised calculation type!')
            end select
