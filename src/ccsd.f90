@@ -283,7 +283,7 @@ module ccsd
          integer :: p, q, r, s
          integer :: pr, qr, pa, pb, qa, qb, ra, rb, sa, sb
          real(dp) :: prqs, psqr
-         real(dp) :: err
+         real(dp) :: err, t1_diagnostic
          integer(kind=8) :: c_max, c_rate, t0, t1
 
          type(state_t) :: st
@@ -341,7 +341,14 @@ module ccsd
             if (conv) then
                write(iunit, '(1X, A)') 'Convergence reached within tolerance.'
                write(iunit, '(1X, A, 1X, F15.12)') 'Final CCSD Energy (Hartree):', st%energy
-
+               ! The 'T1 diagnostic' as defined by https://doi.org/10.1007/978-94-011-0193-6_2
+               ! For now since we're not doing actual unrestricted calculations this is only implemented for restricted,
+               ! as the half of all t1 amp will be zero for 'unrestricted'.
+               t1_diagnostic = sqrt(sum(cc_amp%t_ia**2))/sqrt(real(sys%nel,kind=dp))
+               write(iunit, '(1X, A, 1X, F8.5)') 'T1 diagnostic:', t1_diagnostic
+               if (t1_diagnostic > 0.02_dp) then
+                  write(iunit, '(1X, A)') 'Significant multireference character detected, CCSD result might be unreliable!'
+               end if
                ! Copied for return 
                sys%e_ccsd = st%energy
                call move_alloc(cc_amp%t_ia, sys%t1)
@@ -1664,6 +1671,7 @@ module ccsd
          ! ijab -> baij
          t2_reshape = reshape(t2, shape(t2_reshape), order=(/4,3,2,1/))
 
+         ! Reshape some integral slices so the contracted indices end up first
          allocate(v_vovv(nvirt,nocc,nvirt,nvirt),source=0.0_dp,stat=ierr)
          call check_allocate('v_vovv', nocc*nvirt**3, ierr)
          v_vovv = reshape(v_vvov,shape(v_vovv),order=(/4,3,2,1/))

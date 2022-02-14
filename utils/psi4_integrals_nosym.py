@@ -3,6 +3,7 @@
 
 import psi4
 import numpy as np
+import subprocess
 
 def lowtri_array_2d(end):
     """
@@ -33,32 +34,44 @@ def lowtri_array_4d(eri,end):
                         idx.append([i+1,j+1,k+1,l+1,eri[i,j,k,l]])
     return np.array(idx)
 
-bl = 1.1 # Angstroms
-ang = 104 # Degrees
-psi4.set_memory('2000 MB')
-mol = psi4.geometry(f"""
-    O 
-    H 1 {bl}
-    H 1 {bl} 2 {ang}
-    units = angstrom
-    """)
-psi4.set_options({'basis':'sto-3g'})
-wfn = psi4.core.Wavefunction(mol, psi4.core.BasisSet.build(mol))
-mints = psi4.core.MintsHelper(wfn.basisset())
-S = mints.ao_overlap().nph
-T = mints.ao_kinetic().nph
-V = mints.ao_potential().nph
-eri = mints.ao_eri().nph
+if __name__ == '__main__':
+    bl = 1.1 # Angstroms
+    ang = 104 # Degrees
+    psi4.set_memory('2000 MB')
+    mol = psi4.geometry(f"""
+        O 
+        H 1 {bl}
+        H 1 {bl} 2 {ang}
+        units = angstrom
+        """)
+    psi4.set_options({'basis':'def2-svp'})
+    wfn = psi4.core.Wavefunction(mol, psi4.core.BasisSet.build(mol))
+    mints = psi4.core.MintsHelper(wfn.basisset())
+    geom = np.zeros((mol.natom(),4))
+    geom[:,1:] = mol.geometry().nph[0]
+    geom[:,0] = [int(mol.charge(_)) for _ in range(mol.natom())]
+    S = mints.ao_overlap().nph
+    T = mints.ao_kinetic().nph
+    V = mints.ao_potential().nph
+    eri = mints.ao_eri().nph
 
-nbasis = S[0].shape[0]
-tril_array = lowtri_array_2d(nbasis)
-indices = ((tril_array.T-1)[0],(tril_array.T-1)[1])
-s_dat = np.hstack((tril_array,np.array([S[0][indices]]).T))
-t_dat = np.hstack((tril_array,np.array([T[0][indices]]).T))
-v_dat = np.hstack((tril_array,np.array([V[0][indices]]).T))
-eri_dat = lowtri_array_4d(eri[0],7)
+    nbasis = S[0].shape[0]
+    tril_array = lowtri_array_2d(nbasis)
+    indices = ((tril_array.T-1)[0],(tril_array.T-1)[1])
+    s_dat = np.hstack((tril_array,np.array([S[0][indices]]).T))
+    t_dat = np.hstack((tril_array,np.array([T[0][indices]]).T))
+    v_dat = np.hstack((tril_array,np.array([V[0][indices]]).T))
+    eri_dat = lowtri_array_4d(eri[0],nbasis)
 
-np.savetxt('s.dat', s_dat, ['%1d','%1d','%17.15f'], delimiter='\t')
-np.savetxt('t.dat', t_dat, ['%1d','%1d','%17.15f'], delimiter='\t')
-np.savetxt('v.dat', v_dat, ['%1d','%1d','%17.15f'], delimiter='\t')
-np.savetxt('eri.dat', eri_dat, ['%1d','%1d','%1d','%1d','%17.15f'], delimiter='\t')
+    np.savetxt('geom.dat', geom, ['%1d','%17.15f','%17.15f','%17.15f'], delimiter='\t')
+    with open('geom.dat', 'r') as f:
+        geomcontent = f.readlines()
+    geomcontent.insert(0, str(mol.natom())+'\n')
+    with open('geom.dat', 'w') as f:
+        geomcontent = "".join(geomcontent)
+        f.write(geomcontent)
+
+    np.savetxt('s.dat', s_dat, ['%1d','%1d','%17.15f'], delimiter='\t')
+    np.savetxt('t.dat', t_dat, ['%1d','%1d','%17.15f'], delimiter='\t')
+    np.savetxt('v.dat', v_dat, ['%1d','%1d','%17.15f'], delimiter='\t')
+    np.savetxt('eri.dat', eri_dat, ['%1d','%1d','%1d','%1d','%17.15f'], delimiter='\t')
