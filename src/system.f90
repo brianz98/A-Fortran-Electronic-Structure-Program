@@ -58,7 +58,7 @@ module system
 
    contains
        subroutine read_system_in(sys)
-           ! Reads in input file called `els.in` in `dat/` specifying the levels of theory and tolerance
+           ! Reads in input file called `els.in` in the current working directory specifying the levels of theory and tolerance
            ! In/out:
            !    sys: system under study
 
@@ -75,11 +75,11 @@ module system
                                scf_maxiter, ccsd_maxiter
 
            ! Check if file exists
-           inquire(file='dat/els.in', iostat=ierr)
-           if (ierr /= 0) call error('system::read_system_in', 'input file dat/els.in does not exist')
+           inquire(file='els.in', iostat=ierr)
+           if (ierr /= 0) call error('system::read_system_in', 'input file els.in does not exist')
 
            ! Read namelist
-           open(newunit=ir, file='dat/els.in', action='read')
+           open(newunit=ir, file='els.in', action='read')
            read(unit=ir, nml=elsinput, iostat=ierr)
 
            if (ierr /= 0) call error('system::read_system_in', 'invalid input file format!')

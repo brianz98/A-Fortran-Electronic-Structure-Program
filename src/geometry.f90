@@ -20,7 +20,7 @@ module geometry
             iunit = 6
 
             ! newunit chooses an unused file handle, 'old' means existing file
-            open(newunit=ir, file='dat/geom.dat', status='old', form='formatted')
+            open(newunit=ir, file='geom.dat', status='old', form='formatted')
             read(ir, *) sys%natoms
             
             ! Lazy allocation! 
@@ -94,6 +94,4 @@ module geometry
 
         end subroutine get_e_nuc
 
-
-            
 end module geometry

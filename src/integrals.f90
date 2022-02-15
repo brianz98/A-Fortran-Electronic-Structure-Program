@@ -57,11 +57,11 @@ module integrals
             nbasis = 0
 
             ! Hard-coded filenames
-            enuc_f = 'dat/enuc.dat'
-            ovlp_f = 'dat/s.dat'
-            ke_f = 'dat/t.dat'
-            ele_nuc_f = 'dat/v.dat'
-            eri_f = 'dat/eri.dat'
+            enuc_f = 'enuc.dat'
+            ovlp_f = 's.dat'
+            ke_f = 't.dat'
+            ele_nuc_f = 'v.dat'
+            eri_f = 'eri.dat'
 
             write(iunit, '(1X, 16("-"))')
             write(iunit, '(1X, A)') 'Integral read-in'
