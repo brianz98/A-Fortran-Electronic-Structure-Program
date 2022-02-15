@@ -4,7 +4,8 @@ program main
     use omp_lib
     use integrals, only: read_integrals_in, print_sys_info, int_store_t
     use system, only: system_t, read_system_in
-    use system, only: RHF, UHF, MP2_spinorb, MP2_spatial, CCSD_spinorb, CCSD_spatial, CCSD_T_spinorb, CCSD_T_spatial
+    use system, only: RHF, UHF, MP2_spinorb, MP2_spatial, CCSD_spinorb, CCSD_spatial
+    use system, only: CCSD_T_spinorb, CCSD_T_spatial, CCSD_TT_spatial, RCCSD_T_spatial, RCCSD_TT_spatial
     use hf, only: do_rhf, do_uhf
     use geometry, only: read_geometry_in
     use mp2, only: do_mp2_spinorb, do_mp2_spatial
@@ -17,6 +18,7 @@ program main
     integer :: iunit
     integer(kind=8) :: t0, t1, count_rate, count_max
     integer :: date_values(8)
+    character(80) :: calcname
 
     ! write to stdout
     iunit = 6
@@ -43,7 +45,9 @@ program main
 
     
     associate(ct=>sys%calc_type)
-    if (any((/ct==MP2_spinorb, ct==CCSD_spinorb, ct==CCSD_T_spinorb/))) then
+    ! The spinorbital formulations, as UHF is not yet available, HF and MP2 are actually spatial, and then converted to
+    ! spin-orbital basis for CCSD and CCSD(T)
+    if (any(ct == (/MP2_spinorb, CCSD_spinorb, CCSD_T_spinorb/))) then
         ! Currently UHF is not implemented, so we convert spatial HF orbitals into spinorbitals
         call do_rhf(sys, int_store)
         call system_clock(t1)
@@ -55,27 +59,27 @@ program main
         call do_mp2_spatial(sys, int_store)
         call system_clock(t1)
         if (t1<t0) t1 = t1+count_max
-        write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for UMP2:', real(t1-t0)/count_rate, "s"
+        write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for restricted MP2:', real(t1-t0)/count_rate, "s"
         t0=t1
         
-        if (any((/ct==CCSD_spinorb, ct==CCSD_T_spinorb/))) then
+        if (any(ct == (/CCSD_spinorb, CCSD_T_spinorb/))) then
             call do_ccsd_spinorb(sys, int_store)
             call system_clock(t1)
             if (t1<t0) t1 = t1+count_max
-            write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for UCCSD:', real(t1-t0)/count_rate, "s"
+            write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for unrestricted CCSD:', real(t1-t0)/count_rate, "s"
             t0=t1
 
-            if (ct==CCSD_T_spinorb) then
+            if (ct == CCSD_T_spinorb) then
                 call do_ccsd_t_spinorb(sys, int_store)
                 call system_clock(t1)
                 if (t1<t0) t1 = t1+count_max
-                write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for UCCSD(T):', real(t1-t0)/count_rate, "s"
+                write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for unrestricted CCSD(T):', real(t1-t0)/count_rate, "s"
                 t0=t1
             end if
         end if
     end if
 
-    if (any((/ct==MP2_spatial, ct==CCSD_spatial, ct==CCSD_T_spatial/))) then
+    if (any(ct == (/MP2_spatial, CCSD_spatial, CCSD_T_spatial, CCSD_TT_spatial, RCCSD_T_spatial, RCCSD_TT_spatial/))) then
         call do_rhf(sys, int_store)
         call system_clock(t1)
         if (t1<t0) t1 = t1+count_max
@@ -85,21 +89,21 @@ program main
         call do_mp2_spatial(sys, int_store)
         call system_clock(t1)
         if (t1<t0) t1 = t1+count_max
-        write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for RMP2:', real(t1-t0)/count_rate, "s"
+        write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for restricted MP2:', real(t1-t0)/count_rate, "s"
         t0=t1
         
-        if (any((/ct==CCSD_spatial, ct==CCSD_T_spatial/))) then
+        if (any(ct == (/CCSD_spatial, CCSD_T_spatial, CCSD_TT_spatial, RCCSD_T_spatial, RCCSD_TT_spatial/))) then
             call do_ccsd_spatial(sys, int_store)
             call system_clock(t1)
             if (t1<t0) t1 = t1+count_max
-            write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for RCCSD:', real(t1-t0)/count_rate, "s"
+            write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for restricted CCSD:', real(t1-t0)/count_rate, "s"
             t0=t1
 
-            if (ct==CCSD_T_spatial) then
-                call do_ccsd_t_spatial(sys, int_store)
+            if (any(ct == (/CCSD_T_spatial , CCSD_TT_spatial, RCCSD_T_spatial, RCCSD_TT_spatial/))) then
+                call do_ccsd_t_spatial(sys, int_store, calcname)
                 call system_clock(t1)
                 if (t1<t0) t1 = t1+count_max
-                write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for RCCSD(T):', real(t1-t0)/count_rate, "s"
+                write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for restricted '//trim(calcname)//':', real(t1-t0)/count_rate, "s"
                 t0=t1
             end if
         end if
@@ -108,13 +112,17 @@ program main
 
     write(iunit, '(1X, 64("="))')
     write(iunit, '(1X, A)') 'Final energy breakdown'
-    write(iunit, '(1X, A, 1X, F12.7)') 'E_HF:                   ', sys%e_hf
-    write(iunit, '(1X, A, 1X, F12.7)') 'E_MP2:                  ', sys%e_mp2
-    write(iunit, '(1X, A, 1X, F12.7)') 'E_CCSD:                 ', sys%e_ccsd
-    write(iunit, '(1X, A, 1X, F12.7)') 'E_CCSD(T):              ', sys%e_ccsd_t
+    write(iunit, '(1X, A, 1X, F15.10)') 'E_HF:                   ', sys%e_hf + int_store%e_nuc
+    write(iunit, '(1X, A, 1X, F15.10)') 'E_MP2_corr:             ', sys%e_mp2
+    write(iunit, '(1X, A, 1X, F15.10)') 'E_MP2:                  ', sys%e_mp2 + sys%e_hf + int_store%e_nuc
+    write(iunit, '(1X, A, 1X, F15.10)') 'E_CCSD_corr:            ', sys%e_ccsd
+    write(iunit, '(1X, A, 1X, F15.10)') 'E_CCSD:                 ', sys%e_ccsd + sys%e_hf + int_store%e_nuc
+    write(iunit, '(1X, A, 1X, F15.10)') 'E_(T):                  ', sys%e_ccsd_t
+    write(iunit, '(1X, A, 1X, F15.10)') 'E_CCSD(T):              ', sys%e_ccsd_t + sys%e_ccsd + sys%e_hf + int_store%e_nuc
     write(iunit, '(1X, 40("-"))')
-    write(iunit, '(1X, A, 1X, F12.7)') 'Total electronic energy:', sys%e_hf+sys%e_ccsd+sys%e_ccsd_t
-    write(iunit, '(1X, A, 1X, F12.7)') 'Total energy:           ', sys%e_hf+sys%e_ccsd+sys%e_ccsd_t + int_store%e_nuc
+    write(iunit, '(1X, A, 1X, F15.10)') 'Total electronic energy:', sys%e_hf+sys%e_ccsd+sys%e_ccsd_t
+    write(iunit, '(1X, A, 1X, F15.10)') 'Nuclear repulsion:      ', int_store%e_nuc
+    write(iunit, '(1X, A, 1X, F15.10)') 'Total energy:           ', sys%e_hf+sys%e_ccsd+sys%e_ccsd_t + int_store%e_nuc
 
     call date_and_time(VALUES=date_values)
     write(iunit, '(1X, 64("="))')

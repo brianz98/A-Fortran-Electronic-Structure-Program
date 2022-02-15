@@ -5,6 +5,7 @@ module system
 
    enum, bind(c)
       enumerator :: RHF, UHF, MP2_spinorb, MP2_spatial, CCSD_spinorb, CCSD_spatial, CCSD_T_spinorb, CCSD_T_spatial
+      enumerator :: CCSD_TT_spatial, RCCSD_T_spatial, RCCSD_TT_spatial
    end enum
 
    type system_t
@@ -91,31 +92,40 @@ module system
            sys%scf_maxiter = scf_maxiter; sys%ccsd_maxiter = ccsd_maxiter
 
            select case(trim(calc_type))
-                case("RHF")
-                    sys%calc_type = RHF
-                    sys%restricted = .true.
-                case("UHF")
-                    sys%calc_type = UHF
-                    sys%restricted = .false.
-                case("MP2_spinorb")
-                    sys%calc_type = MP2_spinorb
-                    sys%restricted = .false.
-                case("MP2_spatial")
-                    sys%calc_type = MP2_spatial
-                    sys%restricted = .true.
-                case("CCSD_spinorb")
-                    sys%calc_type = CCSD_spinorb
-                    sys%restricted = .false.
-                case("CCSD_spatial")
-                    sys%calc_type = CCSD_spatial
-                    sys%restricted = .true.
-                case("CCSD(T)_spinorb")
-                    sys%calc_type = CCSD_T_spinorb
-                    sys%restricted = .false.
-                case("CCSD(T)_spatial")
-                    sys%calc_type = CCSD_T_spatial
-                    sys%restricted = .true.
-                case default
+               case("RHF")
+                  sys%calc_type = RHF
+                  sys%restricted = .true.
+               case("UHF")
+                  sys%calc_type = UHF
+                  sys%restricted = .false.
+               case("MP2_spinorb")
+                  sys%calc_type = MP2_spinorb
+                  sys%restricted = .false.
+               case("MP2_spatial")
+                  sys%calc_type = MP2_spatial
+                  sys%restricted = .true.
+               case("CCSD_spinorb")
+                  sys%calc_type = CCSD_spinorb
+                  sys%restricted = .false.
+               case("CCSD_spatial")
+                  sys%calc_type = CCSD_spatial
+                  sys%restricted = .true.
+               case("CCSD(T)_spinorb")
+                  sys%calc_type = CCSD_T_spinorb
+                  sys%restricted = .false.
+               case("CCSD(T)_spatial")
+                  sys%calc_type = CCSD_T_spatial
+                  sys%restricted = .true.
+               case("CCSD[T]_spatial")
+                  sys%calc_type = CCSD_TT_spatial
+                  sys%restricted = .true.
+               case("RCCSD(T)_spatial")
+                  sys%calc_type = RCCSD_T_spatial
+                  sys%restricted = .true.
+               case("RCCSD[T]_spatial")
+                  sys%calc_type = RCCSD_TT_spatial
+                  sys%restricted = .true.
+               case default
                     call error('system::read_system_in', 'Unrecognised calculation type!')
            end select
 
