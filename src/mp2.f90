@@ -1,6 +1,7 @@
 module mp2
    
    use const
+   use, intrinsic :: iso_fortran_env, only : iunit=>output_unit
 
    implicit none
 
@@ -91,7 +92,6 @@ module mp2
          integer :: i, j, k, l, p, q, r, s, a, b
          integer :: kl, ij, pq, rs, pqrs, s_up
          integer :: ia, ja, jb, ib
-         integer, parameter :: iunit = 6
 
          n = sys%nbasis
          tmpdim = n*(n+1)/2
@@ -271,7 +271,6 @@ module mp2
          integer :: i, j, k, l, p, q, r, s, a, b
          integer :: kl, ij, pq, rs, pqrs, s_up
          integer :: ia, ja, jb, ib
-         integer, parameter :: iunit = 6
 
          n = sys%nbasis
          tmpdim = n*(n+1)/2

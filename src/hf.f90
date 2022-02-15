@@ -1,5 +1,6 @@
 module hf
    use const
+   use, intrinsic :: iso_fortran_env, only : iunit=>output_unit
 
    implicit none
 
@@ -31,11 +32,10 @@ module hf
          real(p) :: density(sys%nbasis,sys%nbasis)
 
          type(state_t) :: st
-         integer :: iter, iunit, i
+         integer :: iter, i
          logical :: conv = .false.
          type(diis_t) :: diis
 
-         iunit = 6
          write(iunit, '(1X, 23("-"))')
          write(iunit, '(1X, A)') 'Restricted Hartree-Fock'
          write(iunit, '(1X, 23("-"))')

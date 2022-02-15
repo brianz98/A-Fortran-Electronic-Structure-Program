@@ -1,6 +1,7 @@
 module ccsd
 
    use const
+   use, intrinsic :: iso_fortran_env, only : iunit=>output_unit
    use system, only: system_t
 
    implicit none
@@ -87,7 +88,6 @@ module ccsd
          
          type(cc_amp_t) :: cc_amp
          integer :: ierr, iter
-         integer, parameter :: iunit = 6
          integer, parameter :: maxiter = 20
 
          type(cc_int_t) :: cc_int
@@ -291,7 +291,6 @@ module ccsd
          
          type(cc_amp_t) :: cc_amp
          integer :: ierr, iter
-         integer, parameter :: iunit = 6
          integer, parameter :: maxiter = 20
 
          type(cc_int_t) :: cc_int
@@ -395,7 +394,6 @@ module ccsd
 
          real(dp), allocatable :: temperi(:,:,:,:)
          integer :: i, j, a, b, p, q, r, s, rs, ierr
-         integer, parameter :: iunit = 6
 
          write(iunit, '(1X, A)') 'Forming energy denominator matrices...'
          ! Forming the energy denominator matrices
@@ -1552,7 +1550,6 @@ module ccsd
          integer :: i, j, k, a, b, c, f, m, ierr
          real(p), dimension(:,:,:), allocatable :: tmp_t3d, tmp_t3c, tmp_t3c_d, reshape_tmp1, reshape_tmp2, t2_reshape(:,:,:,:)
          real(p) :: e_T, e_TT
-         integer, parameter :: iunit = 6
 
          write(iunit, '(1X, 10("-"))')
          write(iunit, '(1X, A)') 'CCSD(T)'
@@ -1661,7 +1658,6 @@ module ccsd
          real(p), dimension(:,:,:), allocatable :: tmp_t3_D, tmp_t3, z3, t_bar, reshape_tmp, tmp_y, z3_bar
          real(p), dimension(:,:,:,:), allocatable :: t2_reshape, v_vovv, v_ovoo, asym_t2, c_oovv
          real(p) :: e_T, D_T
-         integer, parameter :: iunit = 6
 
          write(iunit, '(1X, 10("-"))')
          write(iunit, '(1X, A)') 'CCSD(T)'

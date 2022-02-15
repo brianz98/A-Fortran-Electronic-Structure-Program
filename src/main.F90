@@ -2,6 +2,7 @@ program main
 
     use const
     use omp_lib
+    use, intrinsic :: iso_fortran_env, only : iunit=>output_unit
     use integrals, only: read_integrals_in, print_sys_info, int_store_t
     use system, only: system_t, read_system_in
     use system, only: RHF, UHF, MP2_spinorb, MP2_spatial, CCSD_spinorb, CCSD_spatial
@@ -15,13 +16,9 @@ program main
 
     type(int_store_t) :: int_store
     type(system_t) :: sys
-    integer :: iunit
     integer(kind=8) :: t0, t1, count_rate, count_max
     integer :: date_values(8)
     character(80) :: calcname
-
-    ! write to stdout
-    iunit = 6
 
     write(iunit, '(1X, 64("="))')
     write(iunit, '(1X, A)') 'A Fortran Electronic Structure Programme (AFESP)'

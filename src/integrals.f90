@@ -1,5 +1,6 @@
 module integrals
     use const
+    use, intrinsic :: iso_fortran_env, only : iunit=>output_unit
 
     implicit none
 
@@ -44,12 +45,11 @@ module integrals
             type(system_t), intent(inout) :: sys
 
             character(20) :: enuc_f, ovlp_f, ke_f, ele_nuc_f, eri_f
-            integer :: iunit, ir, ios, nbasis
+            integer :: ir, ios, nbasis
             integer :: ibasis, jbasis, abasis, bbasis, ij_ind, ab_ind
             real(p) :: intgrl
 
             ! stdout unit is 6
-            iunit = 6
 
             ! I/O status
             ios = 0
@@ -206,8 +206,6 @@ module integrals
             type(system_t), intent(in) :: sys
             type(int_store_t), intent(in) :: int_store
 
-            integer :: iunit = 6
-
             write(iunit, '(1X, 20("-"))')
             write(iunit, '(1X, A)') 'System information'
             write(iunit, '(1X, 20("-"))')
@@ -220,7 +218,6 @@ module integrals
             write(iunit, '(1X, A, 1X, ES8.2)') 'scf_d_tol:', sys%scf_d_tol
             write(iunit, '(1X, A, 1X, ES8.2)') 'ccsd_e_tol:', sys%ccsd_e_tol
             write(iunit, '(1X, A, 1X, ES8.2)') 'ccsd_t_tol:', sys%ccsd_t_tol
-
 
         end subroutine print_sys_info
 
