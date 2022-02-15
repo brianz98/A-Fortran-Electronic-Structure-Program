@@ -18,6 +18,7 @@ program main
     integer :: iunit
     integer(kind=8) :: t0, t1, count_rate, count_max
     integer :: date_values(8)
+    character(80) :: calcname
 
     ! write to stdout
     iunit = 6
@@ -99,10 +100,10 @@ program main
             t0=t1
 
             if (any(ct == (/CCSD_T_spatial , CCSD_TT_spatial, RCCSD_T_spatial, RCCSD_TT_spatial/))) then
-                call do_ccsd_t_spatial(sys, int_store)
+                call do_ccsd_t_spatial(sys, int_store, calcname)
                 call system_clock(t1)
                 if (t1<t0) t1 = t1+count_max
-                write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for restricted CCSD(T):', real(t1-t0)/count_rate, "s"
+                write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for restricted '//trim(calcname)//':', real(t1-t0)/count_rate, "s"
                 t0=t1
             end if
         end if

@@ -1640,11 +1640,13 @@ module ccsd
          end associate
       end subroutine do_ccsd_t_spinorb
 
-      subroutine do_ccsd_t_spatial(sys, int_store)
+      subroutine do_ccsd_t_spatial(sys, int_store, calcname)
          ! Spatial formuation of CCSD(T) according to Piecuch et al.
          ! In/out:
          !     sys: holds converged amplitudes from CCSD
          !     int_store: integral information.
+         ! Out:
+         !     calcname: the specific version of CCSD(T)/[T] we're doing
 
          use system, only: CCSD_T_spatial, CCSD_TT_spatial, RCCSD_T_spatial, RCCSD_TT_spatial
          use integrals, only: int_store_t
@@ -1652,6 +1654,7 @@ module ccsd
 
          type(system_t), intent(inout) :: sys
          type(int_store_t), intent(inout) :: int_store
+         character(*) :: calcname
 
          integer :: i, j, k, a, b, c, f, m, ierr
          logical :: doing_T, doing_R
@@ -1659,7 +1662,6 @@ module ccsd
          real(p), dimension(:,:,:,:), allocatable :: t2_reshape, v_vovv, v_ovoo, asym_t2, c_oovv
          real(p) :: e_T, D_T
          integer, parameter :: iunit = 6
-         character(80) :: calcname
 
          write(iunit, '(1X, 10("-"))')
          write(iunit, '(1X, A)') 'CCSD(T)'
