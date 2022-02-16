@@ -488,6 +488,7 @@ module ccsd
 
          write(iunit, '(1X, A)') 'Forming initial amplitude guesses...'
          if (restricted) then
+            cc_amp%t_ia = 0.0_dp
             cc_amp%t_ijab = cc_int%v_oovv / cc_int%D_ijab
          else
             cc_amp%t_ijab = cc_int%oovv / cc_int%D_ijab
@@ -1294,6 +1295,7 @@ module ccsd
                      end do
                   end do
                end do
+               tmp_t1(i,a) = tmp_t1(i,a) + tmp
             end do
          end do
          !$omp end parallel do
