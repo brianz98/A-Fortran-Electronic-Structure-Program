@@ -1,0 +1,141 @@
+ ================================================================
+ A Fortran Electronic Structure Programme (AFESP)
+ ================================================================
+ Started running on 15/02/2022 at 21:48:10
+ ----------------
+ Integral read-in
+ ----------------
+ Getting number of basis functions...
+ Allocating integral store...
+ Reading overlap matrix...
+ Reading kinetic integrals...
+ Reading nuclear-electron integrals...
+ Constructing core Hamiltonian...
+ Reading two-body integrals...
+ Done reading integrals!
+ --------------------
+ System information
+ --------------------
+ Number of electrons: 10
+ Number of basis functions: 24
+ Number of occupied orbitals: 5
+ Number of virtual orbitals: 19
+ E_nuc:  5.50098668E+00
+ scf_e_tol: 1.00E-06
+ scf_d_tol: 1.00E-07
+ ccsd_e_tol: 1.00E-06
+ ccsd_t_tol: 1.00E-07
+ Time taken for system initialisation:  0.0309s
+ -----------------------
+ Restricted Hartree-Fock
+ -----------------------
+ Iteration   1  -130.68660811
+ Iteration   2   -62.85673466
+ Iteration   3   -82.39025610
+ Iteration   4   -84.77682107
+ Iteration   5   -84.59845159
+ Iteration   6   -80.04549607
+ Iteration   7   -81.55434725
+ Iteration   8   -81.17493185
+ Iteration   9   -81.16797701
+ Iteration  10   -81.16693059
+ Iteration  11   -81.16732824
+ Iteration  12   -81.16722739
+ Iteration  13   -81.16718156
+ Iteration  14   -81.16716428
+ Iteration  15   -81.16716403
+ Iteration  16   -81.16716444
+ Convergence reached within tolerance.
+ Final SCF Energy (Hartree):    -81.16716427
+ Orbital energies (Hartree):
+  24      3.31136439
+  23      3.18808160
+  22      3.01474681
+  21      3.01296620
+  20      3.01271018
+  19      2.08703644
+  18      1.86196851
+  17      1.71047362
+  16      1.64854753
+  15      1.63126972
+  14      1.60249380
+  13      1.31752108
+  12      1.28547868
+  11      1.15743629
+  10      1.13750279
+   9      0.63214200
+   8      0.59898458
+   7      0.08305860
+   6      0.03196513
+   5     -0.46413394
+   4     -0.48440016
+   3     -0.50003281
+   2     -1.18030291
+   1    -20.63369287
+ Time taken for restricted Hartree-Fock:  0.0444s
+ ----------
+ MP2
+ ----------
+ Performing AO to MO ERI transformation...
+ Calculating MP2 energy...
+ MP2 correlation energy (Hartree):     -0.26162054
+ Time taken for restricted MP2:  0.1022s
+ ----------
+ CCSD
+ ----------
+ Initialise CC intermediate tensors and DIIS auxilliary arrays...
+ Forming energy denominator matrices...
+ Allocating amplitude tensors...
+ Forming ERI slices...
+ Forming initial amplitude guesses...
+ Allocating stored intermediate tensors...
+ Time taken: 0.006676 s
+
+ Initialisation done, now entering iterative CC solver...
+ Iteration  1  -0.261620542965  0.016266 s
+ Iteration  2  -0.249963600523  0.009956 s
+ Iteration  3  -0.268386424442  0.009336 s
+ Iteration  4  -0.286362588325  0.011520 s
+ Iteration  5  -0.287715281614  0.011670 s
+ Iteration  6  -0.289475607803  0.011757 s
+ Iteration  7  -0.290674744913  0.011869 s
+ Iteration  8  -0.291423160647  0.011966 s
+ Iteration  9  -0.291837130998  0.012033 s
+ Iteration 10  -0.292001404756  0.010986 s
+ Iteration 11  -0.292137904732  0.011720 s
+ Iteration 12  -0.292131083850  0.012298 s
+ Iteration 13  -0.292133749126  0.012143 s
+ Iteration 14  -0.292132464279  0.010234 s
+ Iteration 15  -0.292133770209  0.008395 s
+ Iteration 16  -0.292133924299  0.009176 s
+ Iteration 17  -0.292133917392  0.011873 s
+ Iteration 18  -0.292133923365  0.012291 s
+ Iteration 19  -0.292133883694  0.012427 s
+ Iteration 20  -0.292133878977  0.011527 s
+ Iteration 21  -0.292133877757  0.007602 s
+ Convergence reached within tolerance.
+ Final CCSD Energy (Hartree): -0.292133877757
+ T1 diagnostic:  0.03391
+ Significant multireference character detected, CCSD result might be unreliable!
+ Time taken for restricted CCSD:  0.2455s
+ ----------
+ CCSD(T)
+ ----------
+ Restricted CCSD(T) correlation energy (Hartree):    -0.007446527
+ Time taken for restricted CCSD(T):  0.0887s
+ ================================================================
+ Final energy breakdown
+ E_HF:                     -75.6661775910
+ E_MP2_corr:                -0.2616205430
+ E_MP2:                    -75.9277981340
+ E_CCSD_corr:               -0.2921338778
+ E_CCSD:                   -75.9583114688
+ E_(T):                     -0.0074465269
+ E_CCSD(T):                -75.9657579957
+ ----------------------------------------
+ Total electronic energy:  -81.4667446755
+ Nuclear repulsion:          5.5009866798
+ Total energy:             -75.9657579957
+ ================================================================
+ Finished running on 15/02/2022 at 21:48:11
+
