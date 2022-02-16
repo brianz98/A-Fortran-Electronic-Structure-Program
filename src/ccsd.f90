@@ -294,7 +294,7 @@ module ccsd
          integer, parameter :: maxiter = 20
 
          type(cc_int_t) :: cc_int
-         logical :: conv
+         logical :: conv, debug
 
          write(iunit, '(1X, 10("-"))')
          write(iunit, '(1X, A)') 'CCSD'
@@ -317,6 +317,8 @@ module ccsd
 
          write(iunit, '(1X, A)') 'Initialisation done, now entering iterative CC solver...'
 
+         debug = .true.
+
          ! ###################
          ! Iterative CC solver
          ! ###################
@@ -329,10 +331,19 @@ module ccsd
             end if
 
             ! Update intermediate tensors
-            call update_restricted_intermediates(sys, cc_amp, cc_int)
+            if (debug) then
+               call update_restricted_intermediates_debug(sys, cc_amp, cc_int)
+            else
+               call update_restricted_intermediates(sys, cc_amp, cc_int)
+            end if
 
             ! CC amplitude equations
-            call update_amplitudes_restricted(sys, cc_amp, int_store, cc_int)
+            if (debug) then
+               call update_amplitudes_restricted_debug(sys, cc_amp, int_store, cc_int)
+            else
+               call update_amplitudes_restricted(sys, cc_amp, int_store, cc_int)
+            end if
+
             call update_cc_energy(sys, st, cc_int, cc_amp, conv, restricted=.true.)
             call system_clock(t1)
             write(iunit, '(1X, A, 1X, I2, 2X, F15.12, 2X, F8.6, 1X, A)') 'Iteration',iter,st%energy,real(t1-t0, kind=dp)/c_rate,'s'
@@ -1186,7 +1197,6 @@ module ccsd
             end do
          end do
          !$omp end do
-
          !$omp end parallel
 
          ! ----------------------------------------------------------------
@@ -1205,6 +1215,236 @@ module ccsd
          end associate
 
       end subroutine update_restricted_intermediates
+
+      subroutine update_restricted_intermediates_debug(sys, cc_amp, cc_int)
+         ! Build the "recursively generated" intermediates defined in Piecuch et al Table 1.
+
+         use linalg, only: dgemm_wrapper
+
+         type(system_t), intent(in) :: sys
+         type(cc_amp_t), intent(in) :: cc_amp
+         type(cc_int_t), intent(inout) :: cc_int
+
+         integer :: i, j, a, b, c, e, k ,l
+         integer :: m, n, f
+         real(dp) :: tmp
+         real(dp), allocatable, dimension(:,:,:,:) :: reshape_tmp, scratch
+
+         associate(tmp_t1=>cc_int%tmp_tia,tmp_t2=>cc_int%tmp_tijab,t1=>cc_amp%t_ia,t2=>cc_amp%t_ijab, &
+            D_ia=>cc_int%D_ia,D_ijab=>cc_int%D_ijab, nocc=>sys%nocc, nvirt=>sys%nvirt, nbasis=>sys%nbasis, &
+            I_vv=>cc_int%I_vv, I_oo=>cc_int%I_oo, I_vo=>cc_int%I_vo, I_oo_p=>cc_int%I_oo_p, &
+            I_oooo=>cc_int%I_oooo, I_ovov=>cc_int%I_ovov, I_voov=>cc_int%I_voov, &
+            I_vovv_p=>cc_int%I_vovv_p, I_ooov_p=>cc_int%I_ooov_p, &
+            v_oovv=>cc_int%v_oovv, v_ovov=>cc_int%v_ovov, v_vvov=>cc_int%v_vvov, v_vvvv=>cc_int%v_vvvv, v_oooo=>cc_int%v_oooo, &
+            v_oovo=>cc_int%v_oovo, asym_t2=>cc_int%asym_t2, c_oovv=>cc_int%c_oovv, x_voov=>cc_int%x_voov)
+
+         do i = 1, nocc
+            do a = 1, nvirt
+               I_vo(a,i) = sum((2*v_oovv(:,i,:,a)-v_oovv(:,i,a,:))*t1(:,:))
+            end do
+         end do
+
+         do b = 1, nvirt
+            do a = 1, nvirt
+               do j = 1, nocc
+                  do i = 1, nocc
+                     c_oovv(i,j,a,b) = t2(i,j,a,b) + t1(i,a)*t1(j,b)
+                  end do
+               end do
+            end do
+         end do
+
+         do a = 1, nvirt
+            do b = 1, nvirt
+               I_vv(b,a) = sum((2*v_vvov(:,b,:,a)-v_vvov(b,:,:,a))*transpose(t1)) &
+                - sum((2*v_oovv(:,:,:,b)-v_oovv(:,:,b,:))*c_oovv(:,:,:,a))
+            end do
+         end do
+
+         do i = 1, nocc
+            do j = 1, nocc
+               I_oo_p(j,i) = sum((2*v_oovo(:,i,:,j)-v_oovo(i,:,:,j))*t1(:,:)) + sum((v_oovv(:,i,:,:)-v_oovv(i,:,:,:))*t2(:,j,:,:))
+            end do
+         end do
+
+         do i = 1, nocc
+            do j = 1, nocc
+               I_oo(j,i) = I_oo_p(j,i) + sum(I_vo(:,i)*t1(j,:))
+            end do
+         end do
+
+         ! No change
+
+         do j = 1, nocc
+            do i = 1, nocc
+               do l = 1, nocc
+                  do k = 1, nocc
+                     I_oooo(k,l,i,j) = v_oooo(k,l,i,j) + sum(v_oovv(i,j,:,:)*c_oovv(k,l,:,:)) + sum(t1(k,:)*v_oovo(i,j,:,l)) &
+                     + sum(t1(l,:)*v_oovo(j,i,:,k))
+                  end do
+               end do
+            end do
+         end do
+
+         ! No change
+
+         do b = 1, nvirt
+            do a = 1, nvirt
+               do i = 1, nocc
+                  do c = 1, nvirt
+                     I_vovv_p(c,i,a,b) = v_vvov(b,a,i,c) - sum(v_ovov(:,a,i,c)*t1(:,b)) - sum(t1(:,a)*v_oovv(:,i,c,b))
+                  end do
+               end do
+            end do
+         end do
+
+         ! No change
+
+         do a = 1, nvirt
+            do i = 1, nocc
+               do b = 1, nvirt
+                  do j = 1, nocc
+                     I_ovov(j,b,i,a) = v_ovov(j,b,i,a) - sum(v_oovv(i,:,:,b)*c_oovv(j,:,:,a))*0.5 - sum(v_oovo(:,i,b,j)*t1(:,a)) &
+                     + sum(v_vvov(:,b,i,a)*t1(j,:))
+                  end do
+               end do
+            end do
+         end do
+
+         ! No change
+
+         do a = 1, nvirt
+            do i = 1, nocc
+               do j = 1, nocc
+                  do b = 1, nvirt
+                     I_voov(b,j,i,a) = v_oovv(i,j,b,a) + sum(v_oovv(i,:,b,:)*(t2(:,j,:,a)-0.5*c_oovv(:,j,a,:))) &
+                     - 0.5*sum(v_ovov(:,b,i,:)*t2(j,:,a,:)) + sum(v_vvov(b,:,i,a)*t1(j,:)) - sum(v_oovo(i,:,b,j)*t1(:,a))
+                  end do
+               end do
+            end do
+         end do
+
+         ! No change
+
+         do a = 1, nvirt
+            do i = 1, nocc
+               do j = 1, nocc
+                  do b = 1, nvirt
+                     x_voov(b,j,i,a) = sum(v_vvov(b,:,i,a)*t1(j,:))
+                  end do
+               end do
+            end do
+         end do
+
+         ! No change
+
+         do a = 1, nvirt
+            do i = 1, nocc
+               do k = 1, nocc
+                  do j = 1, nocc
+                     I_ooov_p(j,k,i,a) = v_oovo(k,j,a,i) + sum(v_vvov(:,:,i,a)*t2(j,k,:,:)) + sum(t1(j,:)*x_voov(:,k,i,a))
+                  end do
+               end do
+            end do
+         end do
+
+         ! No change
+
+         do b = 1, nvirt
+            do a = 1, nvirt
+               do j = 1, nocc
+                  do i = 1, nocc
+                     asym_t2(i,j,a,b) = 2*t2(i,j,a,b) - t2(j,i,a,b)
+                  end do
+               end do
+            end do
+         end do
+
+         end associate
+
+      end subroutine update_restricted_intermediates_debug
+
+      subroutine update_amplitudes_restricted_debug(sys, cc_amp, int_store, cc_int)
+         ! Perform the CC amplitude equations for the spin-free formulation
+         ! In:
+         !     sys: system under study.
+         !     int_store: integral information
+         ! In/out:
+         !     cc_amp: CC amplitudes being updated
+         !     cc_int: CC intermediates used in computing the updates
+
+         use integrals, only: int_store_t
+         use linalg, only: dgemm_wrapper
+
+         type(system_t), intent(in) :: sys
+         type(int_store_t), intent(in) :: int_store
+         type(cc_amp_t), intent(inout) :: cc_amp
+         type(cc_int_t), intent(inout) :: cc_int
+
+         real(dp), dimension(:,:,:,:), allocatable :: reshape_tmp1, reshape_tmp2, tmp_t2_s
+         real(dp) :: tmp
+         integer :: i, j, a, b, m, e, n, f
+
+         associate(tmp_t1=>cc_int%tmp_tia,tmp_t2=>cc_int%tmp_tijab,t1=>cc_amp%t_ia,t2=>cc_amp%t_ijab, &
+            D_ia=>cc_int%D_ia,D_ijab=>cc_int%D_ijab, nocc=>sys%nocc, nvirt=>sys%nvirt, nbasis=>sys%nbasis, &
+            I_vv=>cc_int%I_vv, I_oo=>cc_int%I_oo, I_vo=>cc_int%I_vo, I_oo_p=>cc_int%I_oo_p, &
+            I_oooo=>cc_int%I_oooo, I_ovov=>cc_int%I_ovov, I_voov=>cc_int%I_voov, &
+            I_vovv_p=>cc_int%I_vovv_p, I_ooov_p=>cc_int%I_ooov_p, &
+            v_oovv=>cc_int%v_oovv, v_ovov=>cc_int%v_ovov, v_vvov=>cc_int%v_vvov, v_vvvv=>cc_int%v_vvvv, v_oooo=>cc_int%v_oooo, &
+            v_oovo=>cc_int%v_oovo, asym_t2=>cc_int%asym_t2, c_oovv=>cc_int%c_oovv, x_voov=>cc_int%x_voov)
+
+
+         do a = 1, nvirt
+            do i = 1, nocc
+               tmp_t1(i,a) = sum(I_vv(:,a)*t1(i,:)) - sum(I_oo_p(i,:)*t1(:,a)) + sum(transpose(I_vo)*(2*t2(:,i,:,a)-t2(i,:,:,a))) &
+                  + sum(t1*(2*v_oovv(:,i,:,a)-v_ovov(:,a,i,:))) - sum(v_oovo(:,:,:,i)*(2*t2(:,:,:,a)-t2(:,:,a,:))) 
+               do m = 1, nocc
+                  tmp_t1(i,a) = tmp_t1(i,a) + sum(v_vvov(:,:,m,a)*(2*t2(m,i,:,:)-t2(i,m,:,:)))
+               end do
+            end do
+         end do
+
+         do b = 1, nvirt
+            do a = 1, nvirt
+               do j = 1, nocc
+                  do i = 1, nocc
+                     tmp_t2(i,j,a,b) = sum(t2(i,j,a,:)*I_vv(:,b)) - sum(t2(i,:,a,b)*I_oo(j,:)) + &
+                     0.5*sum(v_vvvv(:,:,a,b)*c_oovv(i,j,:,:)) + 0.5*sum(c_oovv(:,:,a,b)*I_oooo(i,j,:,:)) &
+                     + sum(t1(i,:)*I_vovv_p(:,j,a,b)) - sum(t1(:,a)*I_ooov_p(i,j,:,b))
+                     do e = 1, nvirt
+                        do m = 1, nocc
+                           tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) - t2(m,j,a,e)*I_ovov(i,e,m,b) - I_ovov(i,e,m,a)*t2(m,j,e,b) + &
+                           (2*t2(m,i,e,a)-t2(i,m,e,a))*I_voov(e,j,m,b) 
+                        end do
+                     end do
+                  end do
+               end do
+            end do
+         end do
+
+         allocate(tmp_t2_s(nocc,nocc,nvirt,nvirt))
+
+         do b = 1, nvirt
+            do a = 1, nvirt
+               do j = 1, nocc
+                  do i = 1, nocc
+                     tmp_t2_s(i,j,a,b) = v_oovv(i,j,a,b) + tmp_t2(i,j,a,b) + tmp_t2(j,i,b,a)
+                  end do
+               end do
+            end do
+         end do
+         tmp_t2 = tmp_t2_s
+         deallocate(tmp_t2_s)
+
+         t1 = tmp_t1/D_ia
+         t2 = tmp_t2/D_ijab
+
+         ! All no change. Intermediates and amplitude update code is **correct**
+
+         end associate
+
+
+      end subroutine update_amplitudes_restricted_debug
 
       subroutine update_amplitudes_restricted(sys, cc_amp, int_store, cc_int)
          ! Perform the CC amplitude equations for the spin-free formulation
