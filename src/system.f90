@@ -4,8 +4,7 @@ module system
    implicit none
 
    enum, bind(c)
-      enumerator :: RHF, UHF, MP2_spinorb, MP2_spatial, CCSD_spinorb, CCSD_spatial, CCSD_T_spinorb, CCSD_T_spatial
-      enumerator :: CCSD_TT_spatial, RCCSD_T_spatial, RCCSD_TT_spatial
+      enumerator :: Hartree_Fock, MP_2, CC_SD, CC_SD_T
    end enum
 
    type system_t
@@ -29,10 +28,6 @@ module system
       real(p), allocatable :: canon_levels(:)
       real(p), allocatable :: canon_levels_spinorb(:)
 
-      ! Converged CCSD amplitudes
-      real(p), allocatable :: t1(:,:)
-      real(p), allocatable :: t2(:,:,:,:)
-
       ! Tolerances
       real(p) :: scf_e_tol = 1e-6
       real(p) :: scf_d_tol = 1e-6
@@ -46,6 +41,12 @@ module system
       ! Level of theory (up to)
       logical :: restricted
       integer :: calc_type
+
+      ! There's currently support for 6 spatial CCSD(T) methods:
+      ! CCSD[T]/(T), renormalised CCSD[T]/(T), completely renormalised CCSD[T]/(T)
+      logical :: ccsd_t_paren = .false.
+      logical :: ccsd_t_renorm = .false.
+      logical :: ccsd_t_comp_renorm = .false.
 
    end type system_t
 
@@ -93,38 +94,51 @@ module system
 
            select case(trim(calc_type))
                case("RHF")
-                  sys%calc_type = RHF
+                  sys%calc_type = Hartree_Fock
                   sys%restricted = .true.
                case("UHF")
-                  sys%calc_type = UHF
+                  sys%calc_type = Hartree_Fock
                   sys%restricted = .false.
                case("MP2_spinorb")
-                  sys%calc_type = MP2_spinorb
+                  sys%calc_type = MP_2
                   sys%restricted = .false.
                case("MP2_spatial")
-                  sys%calc_type = MP2_spatial
+                  sys%calc_type = MP_2
                   sys%restricted = .true.
                case("CCSD_spinorb")
-                  sys%calc_type = CCSD_spinorb
+                  sys%calc_type = CC_SD
                   sys%restricted = .false.
                case("CCSD_spatial")
-                  sys%calc_type = CCSD_spatial
+                  sys%calc_type = CC_SD
                   sys%restricted = .true.
                case("CCSD(T)_spinorb")
-                  sys%calc_type = CCSD_T_spinorb
+                  sys%calc_type = CC_SD_T
                   sys%restricted = .false.
                case("CCSD(T)_spatial")
-                  sys%calc_type = CCSD_T_spatial
+                  sys%calc_type = CC_SD_T
                   sys%restricted = .true.
+                  sys%ccsd_t_paren = .true.
                case("CCSD[T]_spatial")
-                  sys%calc_type = CCSD_TT_spatial
+                  sys%calc_type = CC_SD_T
                   sys%restricted = .true.
                case("RCCSD(T)_spatial")
-                  sys%calc_type = RCCSD_T_spatial
+                  sys%calc_type = CC_SD_T
                   sys%restricted = .true.
+                  sys%ccsd_t_paren = .true.
+                  sys%ccsd_t_renorm = .true.
                case("RCCSD[T]_spatial")
-                  sys%calc_type = RCCSD_TT_spatial
+                  sys%calc_type = CC_SD_T
                   sys%restricted = .true.
+                  sys%ccsd_t_renorm = .true.
+               case("CRCCSD(T)_spatial")
+                  sys%calc_type = CC_SD_T
+                  sys%restricted = .true.
+                  sys%ccsd_t_paren = .true.
+                  sys%ccsd_t_comp_renorm = .true.
+               case("CRCCSD[T]_spatial")
+                  sys%calc_type = CC_SD_T
+                  sys%restricted = .true.
+                  sys%ccsd_t_comp_renorm = .true.
                case default
                     call error('system::read_system_in', 'Unrecognised calculation type!')
            end select

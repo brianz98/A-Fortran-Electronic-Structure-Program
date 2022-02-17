@@ -30,10 +30,19 @@ module integrals
         ! Too big, we compress with symmetry
         real(p), allocatable :: eri(:)
         real(p), allocatable :: eri_mo(:)
-        real(p), allocatable :: asym_spinorb(:,:,:,:)
-        ! needed for CCSD -> CCSD(T), spinorbital formulation
-        real(p), dimension(:,:,:,:), allocatable :: vvoo, vovv, ovoo, v_vvov, v_oovo, v_oovv
+        real(p), allocatable :: asym_spinorb(:,:,:,:)    
     end type int_store_t
+
+    type int_store_cc_t
+        ! A transfer storage type from CCSD to CCSD(T)
+        ! ERI slices, the v_* ones are for spatial
+        real(p), dimension(:,:,:,:), allocatable :: vvoo, vovv, ovoo, v_vvov, v_oovo, v_oovv
+        ! Converged CCSD amplitudes
+        real(p), allocatable :: t1(:,:)
+        real(p), allocatable :: t2(:,:,:,:)
+        ! Intermediates needed for completely renormalised CCSD(T)/[T]
+        real(p), dimension(:,:,:,:), allocatable :: I_ooov_pp, I_vovv_pp
+    end type int_store_cc_t
     
     contains
         subroutine read_integrals_in(sys, int_store)

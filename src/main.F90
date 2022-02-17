@@ -3,10 +3,9 @@ program main
     use const
     use omp_lib
     use, intrinsic :: iso_fortran_env, only : iunit=>output_unit
-    use integrals, only: read_integrals_in, print_sys_info, int_store_t
+    use integrals, only: read_integrals_in, print_sys_info, int_store_t, int_store_cc_t
     use system, only: system_t, read_system_in
-    use system, only: RHF, UHF, MP2_spinorb, MP2_spatial, CCSD_spinorb, CCSD_spatial
-    use system, only: CCSD_T_spinorb, CCSD_T_spatial, CCSD_TT_spatial, RCCSD_T_spatial, RCCSD_TT_spatial
+    use system, only: Hartree_Fock, MP_2, CC_SD, CC_SD_T
     use hf, only: do_rhf, do_uhf
     use geometry, only: read_geometry_in
     use mp2, only: do_mp2_spinorb, do_mp2_spatial
@@ -15,6 +14,7 @@ program main
     implicit none
 
     type(int_store_t) :: int_store
+    type(int_store_cc_t) :: int_store_cc
     type(system_t) :: sys
     integer(kind=8) :: t0, t1, count_rate, count_max
     integer :: date_values(8)
@@ -44,7 +44,7 @@ program main
     associate(ct=>sys%calc_type)
     ! The spinorbital formulations, as UHF is not yet available, HF and MP2 are actually spatial, and then converted to
     ! spin-orbital basis for CCSD and CCSD(T)
-    if (any(ct == (/MP2_spinorb, CCSD_spinorb, CCSD_T_spinorb/))) then
+    if (.not. sys%restricted) then
         ! Currently UHF is not implemented, so we convert spatial HF orbitals into spinorbitals
         call do_rhf(sys, int_store)
         call system_clock(t1)
@@ -52,56 +52,60 @@ program main
         write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for restricted Hartree-Fock:', real(t1-t0)/count_rate, "s"
         t0=t1
 
-        ! Spinorbital MP2 is not currently implemented
-        call do_mp2_spatial(sys, int_store)
-        call system_clock(t1)
-        if (t1<t0) t1 = t1+count_max
-        write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for restricted MP2:', real(t1-t0)/count_rate, "s"
-        t0=t1
-        
-        if (any(ct == (/CCSD_spinorb, CCSD_T_spinorb/))) then
-            call do_ccsd_spinorb(sys, int_store)
+        if (any(ct == [MP_2, CC_SD, CC_SD_T])) then
+            ! Spinorbital MP2 is not currently implemented
+            call do_mp2_spatial(sys, int_store)
             call system_clock(t1)
             if (t1<t0) t1 = t1+count_max
-            write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for unrestricted CCSD:', real(t1-t0)/count_rate, "s"
+            write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for restricted MP2:', real(t1-t0)/count_rate, "s"
             t0=t1
-
-            if (ct == CCSD_T_spinorb) then
-                call do_ccsd_t_spinorb(sys, int_store)
+            
+            if (any(ct == [CC_SD, CC_SD_T])) then
+                call do_ccsd_spinorb(sys, int_store, int_store_cc)
                 call system_clock(t1)
                 if (t1<t0) t1 = t1+count_max
-                write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for unrestricted CCSD(T):', real(t1-t0)/count_rate, "s"
+                write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for unrestricted CCSD:', real(t1-t0)/count_rate, "s"
                 t0=t1
+
+                if (ct == CC_SD_T) then
+                    call do_ccsd_t_spinorb(sys, int_store, int_store_cc)
+                    call system_clock(t1)
+                    if (t1<t0) t1 = t1+count_max
+                    write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for unrestricted CCSD(T):', real(t1-t0)/count_rate, "s"
+                    t0=t1
+                end if
             end if
         end if
     end if
 
-    if (any(ct == (/MP2_spatial, CCSD_spatial, CCSD_T_spatial, CCSD_TT_spatial, RCCSD_T_spatial, RCCSD_TT_spatial/))) then
+    if (sys%restricted) then
         call do_rhf(sys, int_store)
         call system_clock(t1)
         if (t1<t0) t1 = t1+count_max
         write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for restricted Hartree-Fock:', real(t1-t0)/count_rate, "s"
         t0=t1
 
-        call do_mp2_spatial(sys, int_store)
-        call system_clock(t1)
-        if (t1<t0) t1 = t1+count_max
-        write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for restricted MP2:', real(t1-t0)/count_rate, "s"
-        t0=t1
-        
-        if (any(ct == (/CCSD_spatial, CCSD_T_spatial, CCSD_TT_spatial, RCCSD_T_spatial, RCCSD_TT_spatial/))) then
-            call do_ccsd_spatial(sys, int_store)
+        if (any(ct == [MP_2, CC_SD, CC_SD_T])) then 
+            call do_mp2_spatial(sys, int_store)
             call system_clock(t1)
             if (t1<t0) t1 = t1+count_max
-            write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for restricted CCSD:', real(t1-t0)/count_rate, "s"
+            write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for restricted MP2:', real(t1-t0)/count_rate, "s"
             t0=t1
-
-            if (any(ct == (/CCSD_T_spatial , CCSD_TT_spatial, RCCSD_T_spatial, RCCSD_TT_spatial/))) then
-                call do_ccsd_t_spatial(sys, int_store, calcname)
+            
+            if (any(ct == [CC_SD, CC_SD_T])) then
+                call do_ccsd_spatial(sys, int_store, int_store_cc)
                 call system_clock(t1)
                 if (t1<t0) t1 = t1+count_max
-                write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for restricted '//trim(calcname)//':', real(t1-t0)/count_rate, "s"
+                write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for restricted CCSD:', real(t1-t0)/count_rate, "s"
                 t0=t1
+
+                if (ct == CC_SD_T) then
+                    call do_ccsd_t_spatial(sys, int_store, calcname, int_store_cc)
+                    call system_clock(t1)
+                    if (t1<t0) t1 = t1+count_max
+                    write(iunit,'(1X, A, 1X, F7.4, A)')'Time taken for restricted '//trim(calcname)//':',real(t1-t0)/count_rate,"s"
+                    t0=t1
+                end if
             end if
         end if
     end if

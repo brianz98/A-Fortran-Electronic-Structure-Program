@@ -67,16 +67,17 @@ module ccsd
    
    contains
 
-      subroutine do_ccsd_spinorb(sys, int_store)
+      subroutine do_ccsd_spinorb(sys, int_store, int_store_cc)
          ! This is the spinorbital formulation of J.F. Stanton, J. Gauss, J.D. Watts, and R.J. Bartlett, 
          ! J. Chem. Phys. volume 94, pp. 4334-4345 (1991) (https://doi.org/10.1063/1.460620)
 
-         use integrals, only: int_store_t, eri_ind
+         use integrals, only: int_store_t, int_store_cc_t, eri_ind
          use error_handling, only: error, check_allocate
-         use system, only: state_t, CCSD_T_spinorb
+         use system, only: state_t, CC_SD_T
 
          type(system_t), intent(inout) :: sys
          type(int_store_t), intent(inout) :: int_store
+         type(int_store_cc_t), intent(inout) :: int_store_cc
          integer :: p, q, r, s
          integer :: pr, qr, pa, pb, qa, qb, ra, rb, sa, sb
          real(dp) :: prqs, psqr
@@ -244,18 +245,13 @@ module ccsd
 
                ! Copied for return 
                sys%e_ccsd = st%energy
-               call move_alloc(cc_amp%t_ia, sys%t1)
-               call move_alloc(cc_amp%t_ijab, sys%t2)
-               if (sys%calc_type == CCSD_T_spinorb) then
-                  call move_alloc(cc_int%vovv, int_store%vovv)
-                  call move_alloc(cc_int%ovoo, int_store%ovoo)
-                  allocate(int_store%vvoo(nvirt,nvirt,nocc,nocc))
-                  int_store%vvoo = reshape(cc_int%oovv,shape(int_store%vvoo),order=(/3,4,1,2/))
-                  deallocate(cc_int%oooo, cc_int%ooov, cc_int%oovo, cc_int%oovv, cc_int%ovvo, cc_int%ovvv, &
-                     cc_int%vvvv)
-               else
-                  deallocate(cc_int%oooo, cc_int%ooov, cc_int%ovoo, cc_int%oovo, cc_int%oovv, cc_int%ovvo, cc_int%ovvv, &
-                     cc_int%vovv, cc_int%vvvv)
+               call move_alloc(cc_amp%t_ia, int_store_cc%t1)
+               call move_alloc(cc_amp%t_ijab, int_store_cc%t2)
+               if (sys%calc_type == CC_SD_T) then
+                  call move_alloc(cc_int%vovv, int_store_cc%vovv)
+                  call move_alloc(cc_int%ovoo, int_store_cc%ovoo)
+                  allocate(int_store_cc%vvoo(nvirt,nvirt,nocc,nocc))
+                  int_store_cc%vvoo = reshape(cc_int%oovv,shape(int_store_cc%vvoo),order=(/3,4,1,2/))
                end if
                exit
             end if
@@ -265,21 +261,20 @@ module ccsd
 
          ! Nonlazy deallocations
          deallocate(st%t2_old)
-         call deallocate_cc_int_t(cc_int, restricted=.false.)
-         if (diis%use_diis) call deallocate_diis_cc_t(diis)
 
       end subroutine do_ccsd_spinorb
 
-      subroutine do_ccsd_spatial(sys, int_store)
+      subroutine do_ccsd_spatial(sys, int_store, int_store_cc)
          ! This is the spin-free (spatial) formulation of P. Piecuch et al., Computer Physics Communications 149 (2002) 71–96, 
          ! https://doi.org/10.1016/S0010-4655(02)00598-2
 
-         use integrals, only: int_store_t, eri_ind
+         use integrals, only: int_store_t, int_store_cc_t, eri_ind
          use error_handling, only: error, check_allocate
-         use system, only: state_t, CCSD_T_spatial, CCSD_TT_spatial, RCCSD_T_spatial, RCCSD_TT_spatial
+         use system, only: state_t, CC_SD_T
 
          type(system_t), intent(inout) :: sys
          type(int_store_t), intent(inout) :: int_store
+         type(int_store_cc_t), intent(out) :: int_store_cc
          integer :: p, q, r, s
          integer :: pr, qr, pa, pb, qa, qb, ra, rb, sa, sb
          real(dp) :: prqs, psqr
@@ -359,17 +354,20 @@ module ccsd
                if (t1_diagnostic > 0.02_dp) then
                   write(iunit, '(1X, A)') 'Significant multireference character detected, CCSD result might be unreliable!'
                end if
+               if (sys%ccsd_t_comp_renorm) then
+                  ! Too many of the quantities needed in forming the 'generalised moment' quantity M_ijk^abc(2) is in the
+                  ! cc_int derived type, which we want to get automatically deallocated upon existing 'do_ccsd_spatial',
+                  ! so we have to build M_ijk^abc(2) here
+                  call build_cr_ccsd_t_intermediates(sys, cc_int, cc_amp, int_store_cc)
+               end if
                ! Copied for return 
                sys%e_ccsd = st%energy
-               call move_alloc(cc_amp%t_ia, sys%t1)
-               call move_alloc(cc_amp%t_ijab, sys%t2)
-               if (any(sys%calc_type == (/CCSD_T_spatial, CCSD_TT_spatial, RCCSD_T_spatial, RCCSD_TT_spatial/))) then
-                  call move_alloc(cc_int%v_vvov, int_store%v_vvov)
-                  call move_alloc(cc_int%v_oovo, int_store%v_oovo)
-                  call move_alloc(cc_int%v_oovv, int_store%v_oovv)
-                  deallocate(cc_int%v_ovov, cc_int%v_oooo, cc_int%v_vvvv)
-               else
-                  deallocate(cc_int%v_oovv, cc_int%v_ovov, cc_int%v_vvov, cc_int%v_oovo, cc_int%v_oooo, cc_int%v_vvvv)
+               call move_alloc(cc_amp%t_ia, int_store_cc%t1)
+               call move_alloc(cc_amp%t_ijab, int_store_cc%t2)
+               if (sys%calc_type == CC_SD_T) then
+                  call move_alloc(cc_int%v_vvov, int_store_cc%v_vvov)
+                  call move_alloc(cc_int%v_oovo, int_store_cc%v_oovo)
+                  call move_alloc(cc_int%v_oovv, int_store_cc%v_oovv)
                end if
                exit
             end if
@@ -379,8 +377,6 @@ module ccsd
 
          ! Nonlazy deallocations
          deallocate(st%t2_old)
-         call deallocate_cc_int_t(cc_int, restricted=.true.)
-         if (diis%use_diis) call deallocate_diis_cc_t(diis)
 
       end subroutine do_ccsd_spatial
 
@@ -573,6 +569,7 @@ module ccsd
             deallocate(cc_int%D_ia, cc_int%D_ijab)
             deallocate(cc_int%tmp_tia, cc_int%tmp_tijab)
          else
+            deallocate(cc_int%tmp_tia, cc_int%tmp_tijab)
             deallocate(cc_int%I_vo, cc_int%I_vv, cc_int%I_oo_p, cc_int%I_oo, cc_int%asym_t2)
             deallocate(cc_int%c_oovv, cc_int%x_voov, cc_int%I_oooo, cc_int%I_ovov, cc_int%I_voov, cc_int%I_vovv_p, cc_int%I_ooov_p)
          end if
@@ -1714,18 +1711,19 @@ module ccsd
 
       end subroutine update_cc_energy
 
-      subroutine do_ccsd_t_spinorb(sys, int_store)
+      subroutine do_ccsd_t_spinorb(sys, int_store, int_store_cc)
          ! Spinorbital formuation of CCSD(T)
          ! In:
          !     int_store: integral information.
          ! In/out:
          !     sys: holds converged amplitudes from CCSD
 
-         use integrals, only: int_store_t
+         use integrals, only: int_store_t, int_store_cc_t
          use error_handling, only: check_allocate
 
          type(system_t), intent(inout) :: sys
          type(int_store_t), intent(in) :: int_store
+         type(int_store_cc_t), intent(in) :: int_store_cc
 
          integer :: i, j, k, a, b, c, f, m, ierr
          real(p), dimension(:,:,:), allocatable :: tmp_t3d, tmp_t3c, tmp_t3c_d, reshape_tmp1, reshape_tmp2, t2_reshape(:,:,:,:)
@@ -1735,8 +1733,8 @@ module ccsd
          write(iunit, '(1X, A)') 'CCSD(T)'
          write(iunit, '(1X, 10("-"))')
 
-         associate(nvirt=>sys%nvirt, nocc=>sys%nocc, e=>sys%canon_levels_spinorb, t1=>sys%t1, t2=>sys%t2,&
-                   vvoo=>int_store%vvoo,vovv=>int_store%vovv,ovoo=>int_store%ovoo)
+         associate(nvirt=>sys%nvirt, nocc=>sys%nocc, e=>sys%canon_levels_spinorb, t1=>int_store_cc%t1, t2=>int_store_cc%t2,&
+                   vvoo=>int_store_cc%vvoo,vovv=>int_store_cc%vovv,ovoo=>int_store_cc%ovoo)
 
          ! For efficient cache access during tmp_t3c updates
          allocate(t2_reshape(nvirt,nvirt,nocc,nocc), source=0.0_p, stat=ierr)
@@ -1817,7 +1815,7 @@ module ccsd
          end associate
       end subroutine do_ccsd_t_spinorb
 
-      subroutine do_ccsd_t_spatial(sys, int_store, calcname)
+      subroutine do_ccsd_t_spatial(sys, int_store, calcname, int_store_cc)
          ! Spatial formuation of CCSD(T) according to Piecuch et al.
          ! In/out:
          !     sys: holds converged amplitudes from CCSD
@@ -1825,26 +1823,27 @@ module ccsd
          ! Out:
          !     calcname: the specific version of CCSD(T)/[T] we're doing
 
-         use system, only: CCSD_T_spatial, CCSD_TT_spatial, RCCSD_T_spatial, RCCSD_TT_spatial
-         use integrals, only: int_store_t
+         use integrals, only: int_store_t, int_store_cc_t
          use error_handling, only: check_allocate
 
+         type(int_store_cc_t), intent(inout) :: int_store_cc
          type(system_t), intent(inout) :: sys
          type(int_store_t), intent(inout) :: int_store
          character(*) :: calcname
 
          integer :: i, j, k, a, b, c, f, m, ierr
-         logical :: doing_T, doing_R
-         real(p), dimension(:,:,:), allocatable :: tmp_t3_D, tmp_t3, z3, t_bar, reshape_tmp, tmp_y, z3_bar
+         real(p), dimension(:,:,:), allocatable :: tmp_t3_D, tmp_t3, z3, t_bar, reshape_tmp, tmp_y, z3_bar, tmp_m3
          real(p), dimension(:,:,:,:), allocatable :: t2_reshape, v_vovv, v_ovoo, asym_t2, c_oovv
-         real(p) :: e_T, D_T
+         real(p) :: e_T, D_T, e_CR
 
          write(iunit, '(1X, 10("-"))')
          write(iunit, '(1X, A)') 'CCSD(T)'
          write(iunit, '(1X, 10("-"))')
 
-         associate(nvirt=>sys%nvirt, nocc=>sys%nocc, e=>sys%canon_levels, t1=>sys%t1, t2=>sys%t2,&
-                   v_oovv=>int_store%v_oovv,v_vvov=>int_store%v_vvov,v_oovo=>int_store%v_oovo)
+         associate(nvirt=>sys%nvirt, nocc=>sys%nocc, e=>sys%canon_levels, t1=>int_store_cc%t1, t2=>int_store_cc%t2,&
+                   v_oovv=>int_store_cc%v_oovv,v_vvov=>int_store_cc%v_vvov,v_oovo=>int_store_cc%v_oovo, &
+                   doing_T=>sys%ccsd_t_paren, doing_R=>sys%ccsd_t_renorm, doing_CR=>sys%ccsd_t_comp_renorm, &
+                   I_vovv_pp=>int_store_cc%I_vovv_pp, I_ooov_pp=>int_store_cc%I_ooov_pp)
 
          ! For efficient cache access during tmp_t3c updates
          allocate(t2_reshape(nvirt,nvirt,nocc,nocc), source=0.0_p, stat=ierr)
@@ -1856,25 +1855,15 @@ module ccsd
          allocate(v_vovv(nvirt,nocc,nvirt,nvirt),source=0.0_dp,stat=ierr)
          call check_allocate('v_vovv', nocc*nvirt**3, ierr)
          v_vovv = reshape(v_vvov,shape(v_vovv),order=(/4,3,2,1/))
-         deallocate(int_store%v_vvov)
+         deallocate(int_store_cc%v_vvov)
 
          allocate(v_ovoo(nocc,nvirt,nocc,nocc),source=0.0_dp,stat=ierr)
          call check_allocate('v_ovoo', nocc**3*nvirt, ierr)
          v_ovoo = reshape(v_oovo,shape(v_ovoo),order=(/4,3,2,1/))
-         deallocate(int_store%v_oovo)
+         deallocate(int_store_cc%v_oovo)
 
          ! ############################ (R)CCSD(T) or [T] #################################
-         doing_T = .false.
-         doing_R = .false.
-
-         ! To facilitate code reuse, the only difference between
-         ! (R)CCSD(T) and (R)CCSD[T] is that the former has a few additional terms and (R) only needs to accumulate some additional
-         ! terms in the denominator
-         if (any(sys%calc_type == (/CCSD_T_spatial, RCCSD_T_spatial/))) doing_T = .true.
-
-         if (any(sys%calc_type == (/RCCSD_TT_spatial, RCCSD_T_spatial/))) doing_R = .true.
-
-         if (doing_R) then
+         if (doing_R .or. doing_CR) then
             allocate(asym_t2(nocc,nocc,nvirt,nvirt), source=0.0_p, stat=ierr)
             call check_allocate('asym_t2', (nocc*nvirt)**2, ierr)
             asym_t2 = reshape(t2,shape(asym_t2),order=(/2,1,3,4/))
@@ -1887,13 +1876,14 @@ module ccsd
 
          e_T = 0.0_p
          D_T = 0.0_p
+         e_CR = 0.0_p
          
-
          !$omp parallel default(none) &
-         !$omp private(tmp_t3_D, tmp_t3, z3, z3_bar, tmp_y, t_bar, ierr, reshape_tmp) &
-         !$omp shared(sys, int_store, t2_reshape, v_vovv, v_ovoo, doing_T, doing_R, c_oovv, e_T, D_T) 
+         !$omp private(tmp_t3_D, tmp_t3, z3, z3_bar, tmp_y, t_bar, ierr, reshape_tmp, tmp_m3) &
+         !$omp shared(sys, int_store, t2_reshape, v_vovv, v_ovoo, c_oovv, e_T, D_T, e_CR) 
 
-         if (doing_R) then
+         if (doing_R .or. doing_CR) then
+            ! Both need the denominator, which require c_oovv
             !$omp do collapse(2) schedule(static, 10)
             do b = 1, nvirt
                do a = 1, nvirt
@@ -1922,11 +1912,16 @@ module ccsd
             call check_allocate('t_bar', nvirt**3, ierr)
          end if
          
-         if (doing_R) then
+         if (doing_R .or. doing_CR) then
             allocate(tmp_y(nvirt,nvirt,nvirt), source=0.0_p, stat=ierr)
             call check_allocate('tmp_y', nvirt**3, ierr)
             allocate(z3_bar(nvirt,nvirt,nvirt), source=0.0_p, stat=ierr)
             call check_allocate('z3_bar', nvirt**3, ierr)
+         end if
+
+         if (doing_CR) then
+            allocate(tmp_m3(nvirt,nvirt,nvirt), source=0.0_p, stat=ierr)
+            call check_allocate('tmp_m3', nvirt**3, ierr)
          end if
 
          ! We use avoid the storage of full triples (six-dimensional array..) and instead use the strategy of 
@@ -1939,7 +1934,7 @@ module ccsd
          ! Eq. 52: E(T) = (t_bar_abc^ijk + z_abc^ijk) t_ijk^abc(2) D_ijk^abc
          ! t_bar_abcijk = 4/3 t_ijkabc -2t_ijkacb + 2/3 t_ijkbca
          ! However, as all indices are contracted, the ordering of the indices doesn't matter
-         !$omp do schedule(static, 10) collapse(3) reduction(+:e_T, D_T)
+         !$omp do schedule(static, 10) collapse(3) reduction(+:e_T, D_T, e_CR)
          do i = 1, nocc
             do j = 1, nocc
                do k = 1, nocc
@@ -1958,10 +1953,19 @@ module ccsd
                               z3(a,b,c) = (t1(i,a)*v_oovv(j,k,b,c) + t1(j,b)*v_oovv(i,k,a,c) + &
                                            t1(k,c)*v_oovv(i,j,a,b))/(e(i)+e(j)+e(k)-e(a+nocc)-e(b+nocc)-e(c+nocc))
                            end if
-                           if (doing_R) then
+                           if (doing_R .or. doing_CR) then
                               ! The 'y' array as defined in eq. 66 of Piecuch
                               tmp_y(a,b,c) = t1(i,a)*t1(j,b)*t1(k,c) + t1(i,a)*t2(j,k,b,c) + &
                                              t1(j,b)*t2(i,k,a,c) + t1(k,c)*t2(i,j,a,b)
+                           end if
+                           if (doing_CR) then
+                              ! The 'M' array defined in eq. 62 of Piecuch
+                              tmp_m3(a,b,c) = sum(t2(i,j,a,:)*I_vovv_pp(:,k,b,c)) - sum(t2(:,i,b,a)*I_ooov_pp(j,k,:,c)) + &
+                                              sum(t2(j,i,b,:)*I_vovv_pp(:,k,a,c)) - sum(t2(:,j,a,b)*I_ooov_pp(i,k,:,c)) + &
+                                              sum(t2(k,j,c,:)*I_vovv_pp(:,i,b,a)) - sum(t2(:,k,b,c)*I_ooov_pp(j,i,:,a)) + &
+                                              sum(t2(i,k,a,:)*I_vovv_pp(:,j,c,b)) - sum(t2(:,i,c,a)*I_ooov_pp(k,j,:,b)) + &
+                                              sum(t2(j,k,b,:)*I_vovv_pp(:,i,c,a)) - sum(t2(:,j,c,b)*I_ooov_pp(k,i,:,a)) + &
+                                              sum(t2(k,i,c,:)*I_vovv_pp(:,j,a,b)) - sum(t2(:,k,a,c)*I_ooov_pp(i,j,:,b))
                            end if
                         end do
                      end do
@@ -1972,58 +1976,277 @@ module ccsd
                   t_bar = t_bar - 2*reshape_tmp
                   reshape_tmp = reshape(tmp_t3,shape(t_bar),order=(/3,1,2/))
                   t_bar = t_bar + 2*reshape_tmp/3
-                  
-                  ! If doing renormalised CCSD(T)/[T], do the same reshapes for z_bar
-                  if (doing_T .and. doing_R) then
-                     ! RCCSD(T) involves z3_bar whereas RCCSD[T] does not
-                     ! If we're doing RCCSD(T)
+
+                  ! Summary of the family of (T) corrections:
+                  ! E_[T] = t_bar*t3_D
+                  ! E_(T) = (z3 + t_bar)*t3_D
+                  ! E_R[T] = E[T] / (1 + asym_t2*c_oovv + t_bar*y)
+                  ! E_R(T) = E(T) / (1 + asym_t2*c_oovv + t_bar*y + z3_bar*y)
+                  ! E_CR[T] = t_bar*m3 / (1 + asym_t2*c_oovv + t_bar*y)
+                  ! E_CR(T) = (t_bar + z3_bar)*m3 / (1 + asym_t2*c_oovv + t_bar*y + z3_bar*y)
+
+                  if (doing_T .and. (doing_R .or. doing_CR)) then
+                     ! (C)RCCSD(T) involves z3_bar whereas (C)RCCSD[T] does not
+                     ! If we're doing (C)RCCSD(T)
                      z3_bar = 4*z3/3
                      reshape_tmp = reshape(z3,shape(z3_bar),order=(/1,3,2/))
                      z3_bar = z3_bar - 2*reshape_tmp
                      reshape_tmp = reshape(z3,shape(z3_bar),order=(/3,1,2/))
                      z3_bar = z3_bar + 2*reshape_tmp/3
-                     D_T = D_T + sum((t_bar + z3_bar)*tmp_y)
-                     e_T = e_T + sum((t_bar + z3)*tmp_t3_D)
-                  else if (doing_R) then
-                     ! If we're doing RCCSD[T]
-                     D_T = D_T + sum(t_bar*tmp_y)
-                     e_T = e_T + sum(t_bar*tmp_t3_D)
-                  else if (doing_T) then
-                     ! CCSD(T)
-                     e_T = e_T + sum((t_bar + z3)*tmp_t3_D)
-                  else
-                     ! CCSD[T]
-                     e_T = e_T + sum(t_bar*tmp_t3_D)
                   end if
+                  
+                  if (.not. doing_CR) then
+                     ! for R/CCSD(T)/[T] we always need the base quantity of t_bar*t3_D
+                     e_T = e_T + sum(t_bar*tmp_t3_D)
+                     if (doing_T) e_T = e_T + sum(z3*tmp_t3_D)
+                  else
+                     e_CR = e_CR + sum(t_bar*tmp_m3)
+                     if (doing_T) e_CR = e_CR + sum(z3_bar*tmp_m3)
+                  end if
+
+                  if (doing_R .or. doing_CR) then
+                     ! Separately accumulate the denominator
+                     D_T = D_T + sum(t_bar*tmp_y)
+                     if (doing_T) D_T = D_T + sum(z3_bar*tmp_y)
+                  end if
+
                end do
             end do
          end do
          !$omp end do
          !$omp end parallel
          
-         if (doing_R) then
+         if (doing_R .or. doing_CR) then
             D_T = D_T + 1 + 2*sum(t1**2) + sum(asym_t2*c_oovv)
          end if
 
-         select case(sys%calc_type)
-         case(CCSD_T_spatial)
-            calcname = 'CCSD(T)'
-         case(CCSD_TT_spatial)
-            calcname = 'CCSD[T]'
-         case(RCCSD_T_spatial)
-            calcname = 'RCCSD(T)'
-         case(RCCSD_TT_spatial)
-            calcname = 'RCCSD[T]'
-         end select
+         ! Get the name of the calculation right
+         calcname = 'CCSD'
+         if (sys%ccsd_t_paren) then
+            calcname = trim(calcname)//'(T)'
+         else
+            calcname = trim(calcname)//'[T]'
+         end if
 
-         if (any(sys%calc_type == (/CCSD_T_spatial, CCSD_TT_spatial/))) then
+         if (sys%ccsd_t_renorm) calcname = 'renormalised '//trim(calcname)
+         if (sys%ccsd_t_comp_renorm) calcname = 'completely renormalised '//trim(calcname)
+
+         if ((.not. sys%ccsd_t_renorm) .and. (.not. sys%ccsd_t_comp_renorm)) then
+            ! No additional denominator
             write(iunit, '(1X, A, 1X, F15.9)') 'Restricted '//trim(calcname)//' correlation energy (Hartree):', e_T
             sys%e_ccsd_t = e_T
-         else
+         else if (sys%ccsd_t_renorm) then
             write(iunit, '(1X, A, 1X, F15.9)') 'Restricted '//trim(calcname)//' correlation energy (Hartree):', e_T/D_T
             sys%e_ccsd_t = e_T/D_T
+         else if (sys%ccsd_t_comp_renorm) then
+            write(iunit, '(1X, A, 1X, F15.9)') 'Restricted '//trim(calcname)//' correlation energy (Hartree):', e_CR/D_T
+            sys%e_ccsd_t = e_CR/D_T
          end if
          end associate
       end subroutine do_ccsd_t_spatial
+
+      subroutine build_cr_ccsd_t_intermediates(sys, cc_int, cc_amp, int_store_cc)
+         
+         use integrals, only: int_store_t, int_store_cc_t
+         use error_handling, only: check_allocate
+
+         type(cc_int_t), intent(inout) :: cc_int
+         type(cc_amp_t), intent(in) :: cc_amp
+         type(system_t), intent(in) :: sys
+         type(int_store_cc_t), intent(inout) :: int_store_cc
+
+         real(p), allocatable, dimension(:,:,:,:) :: x_ovov_p, x_voov_p, x_vvvo, x_ovoo, x_ovov_pp, x_voov_pp, x_vvvo_p
+
+         integer :: i, j, k, a, b, c, e, m, ierr
+         real(p) :: tmp
+
+         deallocate(cc_int%I_vovv_p, cc_int%I_ooov_p, cc_int%I_oooo,cc_int%I_ovov,cc_int%I_voov, cc_int%I_vv, cc_int%I_oo, &
+                    cc_int%I_oo_p, cc_int%c_oovv, cc_int%x_voov, cc_int%D_ia, cc_int%D_ijab)
+
+         ! A bug (feature??) means that if we allocate these arrays within the associate block, we have to invoke the 
+         ! full name (including the derived type) later on, otherwise a segfault occurs.
+         allocate(int_store_cc%I_vovv_pp(sys%nvirt,sys%nocc,sys%nvirt,sys%nvirt), source=0.0_p, stat=ierr)
+         call check_allocate('int_store_cc%I_vovv_pp',sys%nvirt**3*sys%nocc,ierr)
+         allocate(int_store_cc%I_ooov_pp(sys%nocc,sys%nocc,sys%nocc,sys%nvirt), source=0.0_p, stat=ierr)
+         call check_allocate('int_store_cc%I_ooov_pp',sys%nocc**3*sys%nvirt,ierr)
+
+         associate(t1=>cc_amp%t_ia,t2=>cc_amp%t_ijab, &
+            nocc=>sys%nocc, nvirt=>sys%nvirt, nbasis=>sys%nbasis, &
+            I_vovv_pp=>int_store_cc%I_vovv_pp, I_ooov_pp=>int_store_cc%I_ooov_pp, &
+            I_vo=>cc_int%I_vo, v_oovo=>cc_int%v_oovo, asym_t2=>cc_int%asym_t2, &
+            v_oovv=>cc_int%v_oovv, v_ovov=>cc_int%v_ovov, v_vvov=>cc_int%v_vvov, v_vvvv=>cc_int%v_vvvv, v_oooo=>cc_int%v_oooo)
+
+         !I_vovv_pp(c,i,a,b) = v_vvov(b,a,i,c) + v_vvvv(c,e,a,b)*t1(i,e) - x_ovov_p(i,c,m,a)*t1(m,b) - t1(m,a)*x_voov_p(c,i,m,b) &
+         !            - I_vo(c,m)*t2(m,i,a,b) + x_vvvo(c,e,a,m)*asym_t2(i,m,b,e) - x_vvvo(e,c,a,m)*t2(m,i,e,b) &
+         !            - t2(i,m,e,a)*x_vvvo(e,c,b,m) + t2(m,n,b,a)*x_ovoo(i,c,m,n)
+         !We need: x_ovov_p, x_voov_p, x_vvvo, x_ovoo
+         !
+         !I_ooov_pp(j,k,i,a) = v_oovo(k,j,a,i) - v_oooo(j,k,i,m)*t1(m,a) + x_ovov_pp(j,e,i,a)*t1(k,e) + t1(j,e)*x_voov_pp(e,k,i,a) &
+         !                            + x_ovoo(j,e,i,m)*asym_t2(k,m,a,e) - x_ovoo(j,e,m,i)*t2(m,k,e,a) &
+         !                            - t2(m,j,a,e)*x_ovoo(k,e,m,i) + t2(k,j,e,f)*x_vvvo(e,f,a,i)
+         !We additionally need: x_ovov_pp, x_voov_pp
+         !
+         !x_ovov_p(j,b,i,a) = v_ovov(j,b,i,a) - 0.5*v_oovo(m,i,b,j)*t1(m,a) + t1(j,e)*x_vvvo_p(b,e,a,i)
+         !Turns out we need x_vvvo_p in turn
+         !
+         !x_vvvo_p(b,c,a,i) = v_vvov(c,b,i,a) - 0.5*t1(m,a)*v_oovv(m,i,b,c)
+         !
+         !x_voov_p(b,j,i,a) = v_oovv(i,j,b,a) - 0.5*v_oovo(i,m,b,j)*t1(m,a) + x_vvvo_p(e,b,a,i)*t1(j,e)
+         !
+         !x_vvvo(b,c,a,i) = x_vvvo_p(b,c,a,i) - 0.5*t1(m,a)*v_oovv(m,i,b,c)
+         !
+         !x_ovoo(k,a,i,j) = v_oovo(j,i,a,k) + t1(k,e)*v_oovv(i,j,e,a)
+         !
+         !x_ovov_pp(j,b,i,a) = v_ovov(j,b,i,a) - v_oovo(m,i,b,j)*t1(m,a) + 0.5*t1(j,e)*x_vvvo(b,e,a,i)
+         !
+         !x_voov_pp(b,j,i,a) = v_oovv(i,j,b,a) - v_oovo(i,m,b,j)*t1(m,a) + 0.5*x_vvvo(e,b,a,i)*t1(j,e)
+
+         allocate(x_ovov_p(nocc,nvirt,nocc,nvirt), source=0.0_p, stat=ierr)
+         call check_allocate('x_ovov_p',(nocc*nvirt)**2,ierr)
+         allocate(x_voov_p(nvirt,nocc,nocc,nvirt), source=0.0_p, stat=ierr)
+         call check_allocate('x_voov_p',(nocc*nvirt)**2,ierr)
+         allocate(x_vvvo(nvirt,nvirt,nvirt,nocc), source=0.0_p, stat=ierr)
+         call check_allocate('x_vvvo',nvirt**3*nocc,ierr)
+         allocate(x_ovoo(nocc,nvirt,nocc,nocc), source=0.0_p, stat=ierr)
+         call check_allocate('x_ovoo',nocc**3*nvirt,ierr)
+         allocate(x_ovov_pp(nocc,nvirt,nocc,nvirt), source=0.0_p, stat=ierr)
+         call check_allocate('x_ovov_pp',(nocc*nvirt)**2,ierr)
+         allocate(x_voov_pp(nvirt,nocc,nocc,nvirt), source=0.0_p, stat=ierr)
+         call check_allocate('x_voov_pp',(nocc*nvirt)**2,ierr)
+         allocate(x_vvvo_p(nvirt,nvirt,nvirt,nocc), source=0.0_p, stat=ierr)
+         call check_allocate('x_vvvo_p',nvirt**3*nocc,ierr)
+
+
+         !$omp parallel default(none) &
+         !$omp shared(sys, cc_amp, cc_int, int_store_cc, x_ovov_p, x_voov_p, x_vvvo, x_ovoo, x_ovov_pp, x_voov_pp, x_vvvo_p)
+
+         !$omp do schedule(static, 10) collapse(2) 
+         do i = 1, nocc
+            do a = 1, nvirt
+               do c = 1, nvirt
+                  do b = 1, nvirt
+                     x_vvvo_p(b,c,a,i) = v_vvov(c,b,i,a) - sum(0.5*t1(:,a)*v_oovv(:,i,b,c))
+                  end do
+               end do
+            end do
+         end do
+         !$omp end do
+
+         !$omp do schedule(static, 10) collapse(2) 
+         do a = 1, nvirt
+            do i = 1, nocc
+               do b = 1, nvirt
+                  do j = 1, nocc
+                     x_ovov_p(j,b,i,a) = v_ovov(j,b,i,a) - 0.5*sum(v_oovo(:,i,b,j)*t1(:,a)) + sum(t1(j,:)*x_vvvo_p(b,:,a,i))
+                  end do
+               end do
+            end do
+         end do
+         !$omp end do
+
+         !$omp do schedule(static, 10) collapse(2) 
+         do a = 1, nvirt
+            do i = 1, nocc
+               do j = 1, nocc
+                  do b = 1, nvirt
+                     x_voov_p(b,j,i,a) = v_oovv(i,j,b,a) - 0.5*sum(v_oovo(i,:,b,j)*t1(:,a)) + sum(x_vvvo_p(:,b,a,i)*t1(j,:))
+                  end do
+               end do
+            end do
+         end do
+         !$omp end do
+
+         !$omp do schedule(static, 10) collapse(2) 
+         do i = 1, nocc
+            do a = 1, nvirt
+               do c = 1, nvirt
+                  do b = 1, nvirt
+                     x_vvvo(b,c,a,i) = x_vvvo_p(b,c,a,i) - 0.5*sum(t1(:,a)*v_oovv(:,i,b,c))
+                  end do
+               end do
+            end do
+         end do
+         !$omp end do
+
+         !$omp do schedule(static, 10) collapse(2) 
+         do j = 1, nocc
+            do i = 1, nocc
+               do a = 1, nvirt
+                  do k = 1, nocc
+                     x_ovoo(k,a,i,j) = v_oovo(j,i,a,k) + sum(t1(k,:)*v_oovv(i,j,:,a))
+                  end do
+               end do
+            end do
+         end do
+         !$omp end do
+
+         !$omp do schedule(static, 10) collapse(2) 
+         do a = 1, nvirt
+            do i = 1, nocc
+               do b = 1, nvirt
+                  do j = 1, nocc
+                     x_ovov_pp(j,b,i,a) = v_ovov(j,b,i,a) - sum(v_oovo(:,i,b,j)*t1(:,a)) + 0.5*sum(t1(j,:)*x_vvvo(b,:,a,i))
+                  end do
+               end do
+            end do
+         end do
+         !$omp end do
+
+         !$omp do schedule(static, 10) collapse(2) 
+         do a = 1, nvirt
+            do i = 1, nocc
+               do j = 1, nocc
+                  do b = 1, nvirt
+                     x_voov_pp(b,j,i,a) = v_oovv(i,j,b,a) - sum(v_oovo(i,:,b,j)*t1(:,a)) + 0.5*sum(x_vvvo(:,b,a,i)*t1(j,:))
+                  end do
+               end do
+            end do
+         end do
+         !$omp end do
+
+         !$omp do schedule(static, 10) collapse(3) private(tmp)
+         do b = 1, nvirt
+            do a = 1, nvirt
+               do i = 1, nocc
+                  do c = 1, nvirt
+                     I_vovv_pp(c,i,a,b) = v_vvov(b,a,i,c) + sum(v_vvvv(:,c,b,a)*t1(i,:)) - sum(x_ovov_p(i,c,:,a)*t1(:,b)) &
+                                    - sum(t1(:,a)*x_voov_p(c,i,:,b)) - sum(I_vo(c,:)*t2(:,i,a,b)) + sum(t2(:,:,b,a)*x_ovoo(i,c,:,:)) 
+                     tmp = 0.0_p
+                     do m = 1, nocc
+                        tmp = tmp + sum(x_vvvo(c,:,a,m)*asym_t2(i,m,b,:)) &
+                                             - sum(x_vvvo(:,c,a,m)*t2(m,i,:,b)) - sum(t2(m,i,a,:)*x_vvvo(:,c,b,m))
+                     end do
+                     I_vovv_pp(c,i,a,b) = I_vovv_pp(c,i,a,b) + tmp
+                  end do
+               end do
+            end do
+         end do
+         !$omp end do
+
+         !$omp do schedule(static, 10) collapse(3) private(tmp)
+         do a = 1, nvirt
+            do i = 1, nocc
+               do k = 1, nocc
+                  do j = 1, nocc
+                     I_ooov_pp(j,k,i,a) = v_oovo(k,j,a,i) - sum(v_oooo(:,i,k,j)*t1(:,a)) + sum(x_ovov_pp(j,:,i,a)*t1(k,:)) &
+                                          + sum(t1(j,:)*x_voov_pp(:,k,i,a)) + sum(t2(k,j,:,:)*x_vvvo(:,:,a,i)) 
+                     tmp = 0.0_p
+                     do e = 1, nocc
+                        tmp = tmp + sum(x_ovoo(j,e,i,:)*asym_t2(:,k,e,a)) &
+                                             - sum(x_ovoo(j,e,:,i)*t2(:,k,e,a)) - sum(t2(:,j,a,e)*x_ovoo(k,e,:,i)) 
+                     end do
+                     I_ooov_pp(j,k,i,a) = I_ooov_pp(j,k,i,a) + tmp
+                  end do
+               end do
+            end do
+         end do
+         !$omp end do
+         !$omp end parallel
+
+         deallocate(x_ovov_p, x_voov_p, x_vvvo, x_ovoo, x_ovov_pp, x_voov_pp, x_vvvo_p)
+
+         end associate
+
+      end subroutine build_cr_ccsd_t_intermediates
 
 end module ccsd
