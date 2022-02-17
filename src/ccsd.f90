@@ -259,12 +259,13 @@ module ccsd
          end do
          end associate
 
-         ! Nonlazy deallocations
+         ! Nonlazy deallocations only for derived types that are intent(out) or intent(inout)
          deallocate(st%t2_old)
 
       end subroutine do_ccsd_spinorb
 
       subroutine do_ccsd_spatial(sys, int_store, int_store_cc)
+
          ! This is the spin-free (spatial) formulation of P. Piecuch et al., Computer Physics Communications 149 (2002) 71–96, 
          ! https://doi.org/10.1016/S0010-4655(02)00598-2
 
@@ -275,17 +276,14 @@ module ccsd
          type(system_t), intent(inout) :: sys
          type(int_store_t), intent(inout) :: int_store
          type(int_store_cc_t), intent(out) :: int_store_cc
-         integer :: p, q, r, s
-         integer :: pr, qr, pa, pb, qa, qb, ra, rb, sa, sb
-         real(dp) :: prqs, psqr
-         real(dp) :: err, t1_diagnostic
+         real(dp) :: t1_diagnostic
          integer(kind=8) :: c_max, c_rate, t0, t1
 
          type(state_t) :: st
          type(diis_cc_t) :: diis
          
          type(cc_amp_t) :: cc_amp
-         integer :: ierr, iter
+         integer :: iter
          integer, parameter :: maxiter = 20
 
          type(cc_int_t) :: cc_int
@@ -334,9 +332,9 @@ module ccsd
 
             ! CC amplitude equations
             if (debug) then
-               call update_amplitudes_restricted_debug(sys, cc_amp, int_store, cc_int)
+               call update_amplitudes_restricted_debug(sys, cc_amp, cc_int)
             else
-               call update_amplitudes_restricted(sys, cc_amp, int_store, cc_int)
+               call update_amplitudes_restricted(sys, cc_amp, cc_int)
             end if
 
             call update_cc_energy(sys, st, cc_int, cc_amp, conv, restricted=.true.)
@@ -375,12 +373,13 @@ module ccsd
          end do
          end associate
 
-         ! Nonlazy deallocations
+         ! Nonlazy deallocations only for derived types that are intent(out) or intent(inout)
          deallocate(st%t2_old)
 
       end subroutine do_ccsd_spatial
 
       subroutine init_cc(sys, cc_amp, cc_int, int_store, restricted)
+
          ! Initialise many CC related quantities.
          ! In:
          !     int_store: int_store_t object with MO eri information in it
@@ -400,7 +399,7 @@ module ccsd
          type(cc_int_t), intent(inout) :: cc_int
 
          real(dp), allocatable :: temperi(:,:,:,:)
-         integer :: i, j, a, b, p, q, r, s, rs, ierr
+         integer :: i, j, a, b, p, q, r, s, ierr
 
          write(iunit, '(1X, A)') 'Forming energy denominator matrices...'
          ! Forming the energy denominator matrices
@@ -552,29 +551,6 @@ module ccsd
 
       end subroutine init_cc
 
-      subroutine deallocate_cc_int_t(cc_int, restricted)
-         ! Nonlazy deallocation of the relatively large CC intermediate arrays.
-         ! In:
-         !     restricted: whether we're doing a restricted CC calculation
-         ! In/out:
-         !     cc_int: cc_int_t object being deallocated.
-
-         logical, intent(in) :: restricted
-         type(cc_int_t), intent(inout) :: cc_int
-
-         if (.not. restricted) then
-            deallocate(cc_int%F_oo, cc_int%F_vv, cc_int%F_ov)
-            deallocate(cc_int%W_oooo, cc_int%W_vvvv, cc_int%W_ovvo)
-            deallocate(cc_int%tau, cc_int%tau_tilde)
-            deallocate(cc_int%D_ia, cc_int%D_ijab)
-            deallocate(cc_int%tmp_tia, cc_int%tmp_tijab)
-         else
-            deallocate(cc_int%tmp_tia, cc_int%tmp_tijab)
-            deallocate(cc_int%I_vo, cc_int%I_vv, cc_int%I_oo_p, cc_int%I_oo, cc_int%asym_t2)
-            deallocate(cc_int%c_oovv, cc_int%x_voov, cc_int%I_oooo, cc_int%I_ovov, cc_int%I_voov, cc_int%I_vovv_p, cc_int%I_ooov_p)
-         end if
-      end subroutine
-
       subroutine init_diis_cc_t(sys, diis)
          ! Initialise CCSD DIIS quantities. Some are left unallocated as they need to be resized during the first few iterations.
          ! In:
@@ -675,16 +651,6 @@ module ccsd
          end if
          end associate
       end subroutine update_diis_cc
-
-      subroutine deallocate_diis_cc_t(diis)
-         ! Nonlazy deallocation of the diis_cc_t object as they take up significant memory
-         ! In/out:
-         !     diis: the diis_cc_t object being deallocated
-
-         type(diis_cc_t), intent(inout) :: diis
-
-         deallocate(diis%t1, diis%t2, diis%B, diis%c, diis%rhs, diis%e1, diis%e2, diis%t1_s, diis%t2_s)
-      end subroutine deallocate_diis_cc_t
 
       subroutine build_tau(sys, cc_amp, cc_int)
          ! Build the effective singles and doubles operators.
@@ -1008,6 +974,7 @@ module ccsd
       end subroutine update_amplitudes
 
       subroutine update_restricted_intermediates(sys, cc_amp, cc_int)
+
          ! Build the "recursively generated" intermediates defined in Piecuch et al Table 1.
 
          use linalg, only: dgemm_wrapper
@@ -1016,9 +983,7 @@ module ccsd
          type(cc_amp_t), intent(in) :: cc_amp
          type(cc_int_t), intent(inout) :: cc_int
 
-         integer :: i, j, a, b, c, e, k ,l
-         integer :: m, n, f
-         real(dp) :: tmp
+         integer :: i, j, a, b, c
          real(dp), allocatable, dimension(:,:,:,:) :: reshape_tmp, scratch
 
          associate(tmp_t1=>cc_int%tmp_tia,tmp_t2=>cc_int%tmp_tijab,t1=>cc_amp%t_ia,t2=>cc_amp%t_ijab, &
@@ -1214,6 +1179,7 @@ module ccsd
       end subroutine update_restricted_intermediates
 
       subroutine update_restricted_intermediates_debug(sys, cc_amp, cc_int)
+
          ! Build the "recursively generated" intermediates defined in Piecuch et al Table 1.
 
          use linalg, only: dgemm_wrapper
@@ -1222,10 +1188,7 @@ module ccsd
          type(cc_amp_t), intent(in) :: cc_amp
          type(cc_int_t), intent(inout) :: cc_int
 
-         integer :: i, j, a, b, c, e, k ,l
-         integer :: m, n, f
-         real(dp) :: tmp
-         real(dp), allocatable, dimension(:,:,:,:) :: reshape_tmp, scratch
+         integer :: i, j, a, b, c, k ,l
 
          associate(tmp_t1=>cc_int%tmp_tia,tmp_t2=>cc_int%tmp_tijab,t1=>cc_amp%t_ia,t2=>cc_amp%t_ijab, &
             D_ia=>cc_int%D_ia,D_ijab=>cc_int%D_ijab, nocc=>sys%nocc, nvirt=>sys%nvirt, nbasis=>sys%nbasis, &
@@ -1361,26 +1324,23 @@ module ccsd
 
       end subroutine update_restricted_intermediates_debug
 
-      subroutine update_amplitudes_restricted_debug(sys, cc_amp, int_store, cc_int)
+      subroutine update_amplitudes_restricted_debug(sys, cc_amp, cc_int)
+
          ! Perform the CC amplitude equations for the spin-free formulation
          ! In:
          !     sys: system under study.
          !     int_store: integral information
          ! In/out:
          !     cc_amp: CC amplitudes being updated
-         !     cc_int: CC intermediates used in computing the updates
 
-         use integrals, only: int_store_t
          use linalg, only: dgemm_wrapper
 
          type(system_t), intent(in) :: sys
-         type(int_store_t), intent(in) :: int_store
          type(cc_amp_t), intent(inout) :: cc_amp
          type(cc_int_t), intent(inout) :: cc_int
 
-         real(dp), dimension(:,:,:,:), allocatable :: reshape_tmp1, reshape_tmp2, tmp_t2_s
-         real(dp) :: tmp
-         integer :: i, j, a, b, m, e, n, f
+         real(dp), dimension(:,:,:,:), allocatable :: tmp_t2_s
+         integer :: i, j, a, b, m, e
 
          associate(tmp_t1=>cc_int%tmp_tia,tmp_t2=>cc_int%tmp_tijab,t1=>cc_amp%t_ia,t2=>cc_amp%t_ijab, &
             D_ia=>cc_int%D_ia,D_ijab=>cc_int%D_ijab, nocc=>sys%nocc, nvirt=>sys%nvirt, nbasis=>sys%nbasis, &
@@ -1440,29 +1400,26 @@ module ccsd
 
          end associate
 
-
       end subroutine update_amplitudes_restricted_debug
 
-      subroutine update_amplitudes_restricted(sys, cc_amp, int_store, cc_int)
+      subroutine update_amplitudes_restricted(sys, cc_amp, cc_int)
+
          ! Perform the CC amplitude equations for the spin-free formulation
          ! In:
          !     sys: system under study.
-         !     int_store: integral information
          ! In/out:
          !     cc_amp: CC amplitudes being updated
          !     cc_int: CC intermediates used in computing the updates
 
-         use integrals, only: int_store_t
          use linalg, only: dgemm_wrapper
 
          type(system_t), intent(in) :: sys
-         type(int_store_t), intent(in) :: int_store
          type(cc_amp_t), intent(inout) :: cc_amp
          type(cc_int_t), intent(inout) :: cc_int
 
-         real(dp), dimension(:,:,:,:), allocatable :: reshape_tmp1, reshape_tmp2, tmp_t2_s
+         real(dp), dimension(:,:,:,:), allocatable :: reshape_tmp1, tmp_t2_s
          real(dp) :: tmp
-         integer :: i, j, a, b, m, e, n, f
+         integer :: i, j, a, b, m, e, f
 
          associate(tmp_t1=>cc_int%tmp_tia,tmp_t2=>cc_int%tmp_tijab,t1=>cc_amp%t_ia,t2=>cc_amp%t_ijab, &
             D_ia=>cc_int%D_ia,D_ijab=>cc_int%D_ijab, nocc=>sys%nocc, nvirt=>sys%nvirt, nbasis=>sys%nbasis, &
@@ -1725,9 +1682,9 @@ module ccsd
          type(int_store_t), intent(in) :: int_store
          type(int_store_cc_t), intent(in) :: int_store_cc
 
-         integer :: i, j, k, a, b, c, f, m, ierr
+         integer :: i, j, k, a, b, c, ierr
          real(p), dimension(:,:,:), allocatable :: tmp_t3d, tmp_t3c, tmp_t3c_d, reshape_tmp1, reshape_tmp2, t2_reshape(:,:,:,:)
-         real(p) :: e_T, e_TT
+         real(p) :: e_T
 
          write(iunit, '(1X, 10("-"))')
          write(iunit, '(1X, A)') 'CCSD(T)'
@@ -1813,13 +1770,18 @@ module ccsd
          sys%e_ccsd_t = e_T
          write(iunit, '(1X, A, 1X, F15.9)') 'Unrestricted CCSD(T) correlation energy (Hartree):', e_T
          end associate
+
       end subroutine do_ccsd_t_spinorb
 
       subroutine do_ccsd_t_spatial(sys, int_store, calcname, int_store_cc)
-         ! Spatial formuation of CCSD(T) according to Piecuch et al.
+
+         ! Spatial formuation of CCSD(T) according
+         ! P. Piecuch et al., Computer Physics Communications 149 (2002) 71–96, 
+         ! https://doi.org/10.1016/S0010-4655(02)00598-2
          ! In/out:
          !     sys: holds converged amplitudes from CCSD
          !     int_store: integral information.
+         !     int_store_cc: intermediates carried over from the CCSD calculation.
          ! Out:
          !     calcname: the specific version of CCSD(T)/[T] we're doing
 
@@ -1831,7 +1793,7 @@ module ccsd
          type(int_store_t), intent(inout) :: int_store
          character(*) :: calcname
 
-         integer :: i, j, k, a, b, c, f, m, ierr
+         integer :: i, j, k, a, b, c, ierr
          real(p), dimension(:,:,:), allocatable :: tmp_t3_D, tmp_t3, z3, t_bar, reshape_tmp, tmp_y, z3_bar, tmp_m3
          real(p), dimension(:,:,:,:), allocatable :: t2_reshape, v_vovv, v_ovoo, asym_t2, c_oovv
          real(p) :: e_T, D_T, e_CR
@@ -1942,6 +1904,16 @@ module ccsd
                   do a = 1, nvirt
                      do b = 1, nvirt
                         do c = 1, nvirt
+                           ! Note that in Piecuch et al. there's mention of complex conjugates (x_abc^ijk = x_ijk^abc*), but 
+                           ! since everything's strictly real here we can just follow the normal ordering of indices
+                           ! i.e., _ijk^abc
+                           !
+                           ! We would like to ideally use the intrinsic `reshape`, as we could do for the spin-orbital
+                           ! formulation of CCSD(T), unfortunately in that case the reshape involved was a P(i/jk)P(a/bc),
+                           ! which was natually factorisable into ijk and abc, so we can reshape only the abc slices while 
+                           ! holding ijk fixed. However here the transpositions are 'correlated' and aren't factorisable.
+                           ! There might be a way to do it but I can't think of one for now. Anyway the cost of reshapes might 
+                           ! be similar to the vector operations anyway(?)
                            tmp_t3_D(a,b,c) = sum(t2_reshape(:,a,j,i)*v_vovv(:,k,b,c)) - sum(t2(:,i,b,a)*v_ovoo(:,c,j,k)) + &
                                              sum(t2_reshape(:,b,i,j)*v_vovv(:,k,a,c)) - sum(t2(:,j,a,b)*v_ovoo(:,c,i,k)) + &
                                              sum(t2_reshape(:,c,j,k)*v_vovv(:,i,b,a)) - sum(t2(:,k,b,c)*v_ovoo(:,a,j,i)) + &
@@ -1950,6 +1922,7 @@ module ccsd
                                              sum(t2_reshape(:,c,i,k)*v_vovv(:,j,a,b)) - sum(t2(:,k,a,c)*v_ovoo(:,b,i,j))
                            tmp_t3(a,b,c) = tmp_t3_D(a,b,c)/(e(i)+e(j)+e(k)-e(a+nocc)-e(b+nocc)-e(c+nocc))
                            if (doing_T) then
+                              ! The z3 array as defined in eq.60 of Piecuch
                               z3(a,b,c) = (t1(i,a)*v_oovv(j,k,b,c) + t1(j,b)*v_oovv(i,k,a,c) + &
                                            t1(k,c)*v_oovv(i,j,a,b))/(e(i)+e(j)+e(k)-e(a+nocc)-e(b+nocc)-e(c+nocc))
                            end if
@@ -2017,6 +1990,7 @@ module ccsd
          !$omp end parallel
          
          if (doing_R .or. doing_CR) then
+            ! These terms are always present in the denominator
             D_T = D_T + 1 + 2*sum(t1**2) + sum(asym_t2*c_oovv)
          end if
 
@@ -2043,10 +2017,22 @@ module ccsd
             sys%e_ccsd_t = e_CR/D_T
          end if
          end associate
+
       end subroutine do_ccsd_t_spatial
 
       subroutine build_cr_ccsd_t_intermediates(sys, cc_int, cc_amp, int_store_cc)
-         
+
+         ! Builds the two intermediate arrays needed for the completely renormalised CCSD[T]/(T) approaches as 
+         ! defined in P. Piecuch et al., Computer Physics Communications 149 (2002) 71–96, 
+         ! https://doi.org/10.1016/S0010-4655(02)00598-2
+         ! Specifically, Table 1 defines the I_ciab'' and I_jkia'' quantities and other quantities involved in their formation
+         ! In:
+         !     cc_amp: holds the converged CC amplitudes.
+         !     sys: system information
+         ! In/out:
+         !     cc_int: holds CC intermediate tensors needed.
+         !     int_store_cc: stores the intermediate tensors carried over to CCSD(T).
+
          use integrals, only: int_store_t, int_store_cc_t
          use error_handling, only: check_allocate
 
