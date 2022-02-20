@@ -23,6 +23,13 @@ else
     cmakeopt=''
 fi
 
+fppfiles="src/linalg.fpp"
+
+for fppfile in ${fppfiles}
+do
+    fypp -m itertools ${fppfile} "${fppfile%.fpp}.f90"
+done
+
 if [ $n_flag -eq 1 ]
 then
     rm -r build
@@ -37,3 +44,8 @@ else
     cp els.x ..
     cd ..
 fi
+
+for fppfile in ${fppfiles}
+do
+    rm "${fppfile%.fpp}.f90"
+done
