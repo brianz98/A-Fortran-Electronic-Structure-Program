@@ -23,6 +23,8 @@ else
     cmakeopt=''
 fi
 
+rm src/*.old
+
 fppfiles="src/linalg.fpp"
 
 for fppfile in ${fppfiles}
@@ -47,5 +49,5 @@ fi
 
 for fppfile in ${fppfiles}
 do
-    rm "${fppfile%.fpp}.f90"
+    mv "${fppfile%.fpp}.f90" "${fppfile%.fpp}.old"
 done
