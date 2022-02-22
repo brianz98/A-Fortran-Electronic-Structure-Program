@@ -48,6 +48,9 @@ module system
       logical :: ccsd_t_renorm = .false.
       logical :: ccsd_t_comp_renorm = .false.
 
+      ! Do we additionally write a FCIDUMP file?
+      logical :: write_fcidump = .false.
+
    end type system_t
 
    type state_t
@@ -68,13 +71,14 @@ module system
            type(system_t), intent(inout) :: sys
            real(p) :: scf_e_tol, scf_d_tol, ccsd_e_tol, ccsd_t_tol
            integer :: scf_diis_n_errmat, ccsd_diis_n_errmat, scf_maxiter, ccsd_maxiter
+           logical :: write_fcidump
            character(40) :: calc_type
 
            integer :: ir, ierr
 
            ! Define namelist
            namelist /elsinput/ calc_type, scf_e_tol, scf_d_tol, scf_diis_n_errmat, ccsd_e_tol, ccsd_t_tol, ccsd_diis_n_errmat, &
-                               scf_maxiter, ccsd_maxiter
+                               scf_maxiter, ccsd_maxiter, write_fcidump
 
            ! Check if file exists
            inquire(file='els.in', iostat=ierr)
@@ -90,7 +94,7 @@ module system
 
            sys%scf_e_tol = scf_e_tol; sys%scf_d_tol = scf_d_tol; sys%scf_diis_n_errmat = scf_diis_n_errmat
            sys%ccsd_e_tol = ccsd_e_tol; sys%ccsd_t_tol = ccsd_t_tol; sys%ccsd_diis_n_errmat = ccsd_diis_n_errmat
-           sys%scf_maxiter = scf_maxiter; sys%ccsd_maxiter = ccsd_maxiter
+           sys%scf_maxiter = scf_maxiter; sys%ccsd_maxiter = ccsd_maxiter; sys%write_fcidump = write_fcidump
 
            select case(trim(calc_type))
                case("RHF")

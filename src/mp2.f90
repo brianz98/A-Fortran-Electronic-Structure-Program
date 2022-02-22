@@ -435,6 +435,48 @@ module mp2
 
          write(iunit, '(1X, A, 1X, F15.8)') 'MP2 correlation energy (Hartree):', sys%e_mp2
 
+         if (sys%write_fcidump) then
+            call write_fcidump(sys, int_store%eri_mo)
+         end if
+
       end subroutine do_mp2_spatial
+
+      subroutine write_fcidump(sys, eri)
+
+         use, intrinsic :: iso_fortran_env, only : iunit=>output_unit
+         use integrals, only: eri_ind
+         use system, only: system_t
+
+         type(system_t), intent(in) :: sys
+         real(dp), intent(in) :: eri(:)
+
+         integer :: p, q, r, s, pqrs, s_up
+         integer :: ir
+
+         pqrs = 0
+
+         write(iunit, '(1X, A)') 'Writing FCIDUMP file...'
+         open(newunit=ir, file='FCIDUMP', form='formatted', action='write', status='replace')
+
+         do p = 1, sys%nbasis
+            do q = 1, p
+               do r = 1, p
+                  if (p==r) then
+                     s_up = q
+                  else
+                     s_up = r
+                  end if
+                  do s = 1, s_up
+                     pqrs = pqrs+1
+                     if (abs(eri(pqrs))>1e-7) write(ir, '(I3,I3,I3,I3,ES17.9)') p,q,r,s,eri(pqrs)
+                  end do
+               end do
+            end do
+         end do
+
+         close(ir)
+         write(iunit, '(1X, A)') 'Done writing FCIDUMP file!'
+
+      end subroutine write_fcidump
 
 end module mp2
