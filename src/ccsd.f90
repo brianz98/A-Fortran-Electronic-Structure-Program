@@ -1212,15 +1212,19 @@ module ccsd
             do i = 1, nocc
                do b = 1, nvirt
                   do j = 1, nocc
-                     I_voov(b,j,i,a) = v_oovv(j,i,a,b) + sum(v_oovv(:,i,:,b)*(t2(:,j,:,a)-0.5*c_oovv(:,j,a,:))) - &
-                     0.5*sum(v_ovov(:,:,i,b)*t2(:,j,:,a)) + sum(v_vvov(b,:,i,a)*t1(j,:))
+                     I_voov(b,j,i,a) = v_oovv(j,i,a,b)
+                     do e = 1, nvirt
+                        I_voov(b,j,i,a) = I_voov(b,j,i,a) + v_vvov(b,e,i,a)*t1(j,e)
+                        do m = 1, nocc
+                           I_voov(b,j,i,a) = I_voov(b,j,i,a) + v_oovv(m,i,e,b)*(t2(m,j,e,a) - 0.5*c_oovv(m,j,a,e)) - &
+                           0.5*v_ovov(m,e,i,b)*t2(m,j,e,a) 
+                        end do
+                     end do
                   end do
                end do
             end do
          end do
          !$omp end do
-
-
 
          ! ----------------------------------------------------------------
          ! I_ciab' = v_ciab - v_ciam t_mb - t_ma v_cimb
@@ -1232,7 +1236,10 @@ module ccsd
             do a = 1, nvirt
                do i = 1, nocc
                   do c = 1, nvirt
-                     I_vovv_p(c,i,a,b) = v_vvov(b,a,i,c) - sum(v_oovv(:,i,c,b)*t1(:,a))
+                     I_vovv_p(c,i,a,b) = v_vvov(b,a,i,c)
+                     do m = 1, nocc
+                        I_vovv_p(c,i,a,b) = I_vovv_p(c,i,a,b) - v_oovv(m,i,c,b)*t1(m,a)
+                     end do
                   end do
                end do
             end do
@@ -1247,7 +1254,10 @@ module ccsd
             do i = 1, nocc
                do j = 1, nocc
                   do b = 1, nvirt
-                     x_voov(b,j,i,a) = sum(v_vvov(b,:,i,a)*t1(j,:))
+                     x_voov(b,j,i,a) = 0.0_dp
+                     do e = 1, nvirt
+                        x_voov(b,j,i,a) = x_voov(b,j,i,a) + v_vvov(b,e,i,a)*t1(j,e)
+                     end do
                   end do
                end do
             end do
@@ -1549,9 +1559,12 @@ module ccsd
          !$omp shared(sys, cc_amp, cc_int)
          do a = 1, nvirt
             do i = 1, nocc
-               ! Hopefully the compiler can cache transpose(I_vo) somewhere so we don't have to create a tmp array
-               tmp_t1(i,a) = tmp_t1(i,a) + sum(transpose(I_vo)*asym_t2(:,i,:,a)) &
-                           + sum(t1*(2*v_oovv(:,i,:,a) - v_ovov(:,a,i,:)))
+               do e = 1, nvirt
+                  do m = 1, nocc
+                     tmp_t1(i,a) = tmp_t1(i,a) + I_vo(e,m)*asym_t2(m,i,e,a) &
+                           + t1(m,e)*(2*v_oovv(m,i,e,a) - v_ovov(m,a,i,e))
+                  end do
+               end do
             end do
          end do
          !$omp end parallel do
@@ -1622,7 +1635,9 @@ module ccsd
             do a = 1, nvirt
                do j = 1, nocc
                   do i = 1, nocc
-                     tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) - sum(t2(:,i,b,a)*I_oo(j,:))
+                     do m = 1, nocc
+                        tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) - t2(m,i,b,a)*I_oo(j,m)
+                     end do
                   end do
                end do
             end do
@@ -1671,7 +1686,9 @@ module ccsd
             do a = 1, nvirt
                do j = 1, nocc
                   do i = 1, nocc
-                     tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) - sum(t1(:,a)*I_ooov_p(i,j,:,b))
+                     do m = 1, nocc
+                        tmp_t2(i,j,a,b) = tmp_t2(i,j,a,b) - t1(m,a)*I_ooov_p(i,j,m,b)
+                     end do
                   end do
                end do
             end do
