@@ -5,7 +5,7 @@ import numpy as np
 from pathlib import Path
 import subprocess as sp
 
-def generate_gamess_input_file(bl, ang, dirname, calcname):
+def generate_gamess_input_file(bl, ang, dirname, calcname, basis):
     geom_string = f"""
     cnv 2
 
@@ -18,14 +18,14 @@ def generate_gamess_input_file(bl, ang, dirname, calcname):
         f.write(' $contrl scftyp=rhf coord=zmt runtyp=energy units=angs cctyp=cr-cc ispher=1 $end\n')
         f.write(' $system mwords=5 memddi=10 $end\n')
         f.write(' $guess  guess=huckel $end\n')
-        f.write(' $basis  gbasis=ccd $end\n')
+        f.write(f' $basis  {basis} $end\n')
         f.write(' $data\n')
         f.write(geom_string)
         f.write(' $end')
 
-def run_gamess(bl, ang, gamess_dir, directory, calc_name):
+def run_gamess(bl, ang, gamess_dir, directory, calc_name, basis):
     
-    generate_gamess_input_file(bl, ang, directory, calc_name)
+    generate_gamess_input_file(bl, ang, directory, calc_name, basis)
     gamess_string = gamess_dir+f' {calc_name} 00 1 1 1'
     result = sp.check_output(gamess_string,cwd=directory, shell=True).decode('utf-8').split('\n')
 
@@ -59,23 +59,25 @@ def run_gamess(bl, ang, gamess_dir, directory, calc_name):
                 energy[10] = float(line.split(' ')[-1])
     return energy
 
-def main(molname, basis, bl_upper, bl_lower, bl_step, ang, gamess_dir, gamess_scrdir):
+def main(molname, basis, bl_upper, bl_lower, bl_step, ang_upper, ang_lower, ang_step, gamess_dir, gamess_scrdir):
     # Clear scratch
     sp.call(f'rm {gamess_scrdir}/*',shell=True)
 
     Path(molname).mkdir(exist_ok=True)
 
-    num_points = int((bl_upper-bl_lower)/bl_step + 1)
+    num_bl_points = int((bl_upper-bl_lower)/bl_step + 1)
+    num_ang_points = int((ang_upper-ang_lower)/ang_step + 1)
     # [bondlength, angle, e_hf, e_mp2, e_ccsd, e_ccsd[t], e_ccsd(t), e_rccsd[t], e_rccsd(t), e_crccsd[t], e_crccsd(t), t1_diagn, [t]_denom, (t)_denom]
-    binding_data = np.zeros((num_points,13))
+    binding_data = np.zeros((num_bl_points*num_ang_points,13))
     i = 0
-    for bl in np.linspace(bl_lower,bl_upper,num_points):
-        dirname = f'{molname}'
-        calc_name = f'{molname}_{bl}_{ang}'
-        e_list = run_gamess(bl, ang, gamess_dir, dirname, calc_name)
-        binding_data[i,:2] = [bl, ang]
-        binding_data[i,2:] = e_list
-        i += 1
+    for bl in np.linspace(bl_lower,bl_upper,num_bl_points):
+        for ang in np.linspace(ang_lower,ang_upper,num_ang_points):
+            dirname = f'{molname}'
+            calc_name = f'{molname}_{bl}_{ang}'
+            e_list = run_gamess(bl, ang, gamess_dir, dirname, calc_name, basis)
+            binding_data[i,:2] = [bl, ang]
+            binding_data[i,2:] = e_list
+            i += 1
 
     fmt_arr = ['%5.3f','%6.3f'] + ['%17.15f']*11
     np.savetxt(f'{molname}/binding_data.dat',binding_data,fmt_arr)
@@ -88,18 +90,46 @@ if __name__ == '__main__':
     gamess_scrdir = '/scratch/zz376/gamess/stable-userscr'
 
     # Name of molecule
-    molname = 'h2'
+    molname = 'h2o'
         
     # Basis set to be used
-    basis = 'sto-3g'
+    basis = 'cc-pvdz'
     molname = f'{molname}-{basis}'
+    basis_dict = {
+        'sto-3g':'gbasis=sto ngauss=3', 
+        '3-21g':'gbasis=n21 ngauss=3',
+        'cc-pvdz':'gbasis=ccd',
+        'cc-pvtz':'gbasis=cct',
+        'cc-pvqz':'gbasis=ccq',
+        'aug-cc-pvdz':'gbasis=accd',
+        'aug-cc-pvtz':'gbasis=acct',
+        'aug-cc-pvqz':'gbasis=accq',
+        'cc-pcvdz':'gbasis=ccdc',
+        'cc-pcvtz':'gbasis=cctc',
+        'cc-pcvqz':'gbasis=ccqc',
+        'aug-cc-pcvdz':'gbasis=accdc',
+        'aug-cc-pcvtz':'gbasis=acctc',
+        'aug-cc-pcvqz':'gbasis=accqc',
+        'cc-pwcvdz':'gbasis=ccdwc',
+        'cc-pwcvtz':'gbasis=cctwc',
+        'cc-pwcvqz':'gbasis=ccqwc',
+        'aug-cc-pwcvdz':'gbasis=accdwc',
+        'aug-cc-pwcvtz':'gbasis=acctwc',
+        'aug-cc-pwcvqz':'gbasis=accqwc'
+    }
+    try:
+        gamess_basis_string = basis_dict[basis]
+    except KeyError:
+        raise KeyError("Requested basis set not supported!")
     
     # Angstrom
-    bl_upper = 1.0
+    bl_upper = 2.0
     bl_lower = 0.6
-    bl_step = 0.1
+    bl_step = 0.02
     
     # Degrees
-    ang = 104.45
+    ang_upper = 150
+    ang_lower = 75
+    ang_step = 2.5
     
-    main(molname, basis, bl_upper, bl_lower, bl_step, ang, gamess_dir, gamess_scrdir)
+    main(molname, gamess_basis_string, bl_upper, bl_lower, bl_step, ang_upper, ang_lower, ang_step, gamess_dir, gamess_scrdir)
