@@ -96,26 +96,39 @@ module linalg
          if (abs(matel)<depsilon) matel = 0.0_p
       end subroutine zero_mat
 
-      subroutine omp_reshape(out_arr, in_arr, arr_order)
+      subroutine omp_reshape(out_arr, in_arr, arr_order, beta)
          ! Performs an equivalent operation to the Fortran intrinsic `reshape' but with OMP acceleration.
          ! The `dimension(:,:,:,:)' specification also means array lower bound must be 1 (default Fortran)
 
          ! The limitation (perhaps of my understanding) of the Fypp preprocessor means that 
          ! we can't achieve the Fortran `reshape' style permutation, and instead we can only offer the more 'common-sense'
          ! version of i,j,k,l (2,3,1,4)-> j,k,i,l
+
+         ! The beta parameter, named in analogy to ?gemm, if provided, performs the following operation:
+         ! out_arr = beta*out_arr + reshape(in_arr)
          
          ! [todo] - Checks on arr_order
 
          real(dp), dimension(:,:,:,:), intent(in) :: in_arr
          character(4), intent(in) :: arr_order
-         real(dp), dimension(:,:,:,:), intent(out) :: out_arr
+         real(dp), intent(in), optional :: beta
+         real(dp), dimension(:,:,:,:), intent(inout) :: out_arr
 
+         real(dp) :: beta_loc
          integer :: i, j, k, l, iu, ju, ku, lu
 
          iu = ubound(in_arr, dim=1)
          ju = ubound(in_arr, dim=2)
          ku = ubound(in_arr, dim=3)
          lu = ubound(in_arr, dim=4)
+
+         if (present(beta)) then
+            beta_loc = beta
+         else
+            ! If out_arr isn't zeroed, 0*out_arr isn't guranteed to be zero (?)
+            beta_loc = 0.0_dp
+            out_arr = 0.0_dp
+         end if
 
 #:set ORDER_STRS = [''.join(_) for _ in list(itertools.permutations('1234'))]
 #:set INDEX_LOOKUP = ['i','j','k','l']
@@ -126,12 +139,12 @@ $:','.join([INDEX_LOOKUP[int(_)-1] for _ in ORD_STR])
 #!
 #:for ORDER_STR in ORDER_STRS
          if (arr_order == '${ORDER_STR}$') then
-            !$omp parallel do default(none) shared(in_arr, out_arr, iu, ju, ku, lu)
+            !$omp parallel do default(none) shared(in_arr, out_arr, iu, ju, ku, lu, beta_loc)
             do l = 1, lu
                do k = 1, ku
                   do j = 1, ju
                      do i = 1, iu
-                        out_arr(${permute_index(ORDER_STR)}$) = in_arr(i,j,k,l)
+                        out_arr(${permute_index(ORDER_STR)}$) = beta_loc*out_arr(${permute_index(ORDER_STR)}$) + in_arr(i,j,k,l)
                      end do
                   end do
                end do

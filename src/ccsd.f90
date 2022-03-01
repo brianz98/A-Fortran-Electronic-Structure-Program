@@ -1127,15 +1127,12 @@ module ccsd
 
          ! ----------------------------------------------------------------
          ! (Cont'd)
-         ! I_ji' += (v_efmi - v_efim) t_mjef
-         allocate(reshape_tmp(nocc,nocc,nvirt,nvirt))
-         call omp_reshape(reshape_tmp, v_oovv, '1243')
-         reshape_tmp = v_oovv - reshape_tmp
-         allocate(scratch(nocc,nvirt,nvirt,nocc))
-         call omp_reshape(scratch, reshape_tmp, '1432')
+         ! I_ji' += v_efmi*asymt2_mjef
+         allocate(reshape_tmp(nocc,nvirt,nvirt,nocc))
+         ! mief -> mfei
+         call omp_reshape(reshape_tmp, v_oovv, '1432')
+         call dgemm_wrapper('N','N',nocc,nocc,nocc*nvirt**2,asym_t2,reshape_tmp,I_oo_p,alpha=1.0_p,beta=1.0_p)
          deallocate(reshape_tmp)
-         call dgemm_wrapper('N','N',nocc,nocc,nocc*nvirt**2,t2,scratch,I_oo_p,alpha=1.0_p,beta=1.0_p)
-         deallocate(scratch)
 
          ! ----------------------------------------------------------------
          ! I_ji = I_ji' + I_ei t_je
@@ -1199,6 +1196,10 @@ module ccsd
          ! ----------------------------------------------------------------
          !                                                                                  |-> cont'd below with dgemm
          ! I_bjia = v_bjia + v_beim (t_mjea - 0.5 c_mjae) - 0.5 v_mbie t_jmae + v_beia t_je - v_bjim t_ma
+         ! Some of these tensors should probably be laid out like below which would make a lot of these contractions make sense.. 
+         ! 2 3
+         ! 1 4
+
          ! v_bjia = v_oovv(j,i,a,b)
          ! v_beim = v_oovv(m,i,e,b)
          ! v_mbie = v_ovov(m,e,i,b), both contracted indices in front
@@ -1216,8 +1217,8 @@ module ccsd
                      do e = 1, nvirt
                         I_voov(b,j,i,a) = I_voov(b,j,i,a) + v_vvov(b,e,i,a)*t1(j,e)
                         do m = 1, nocc
-                           I_voov(b,j,i,a) = I_voov(b,j,i,a) + v_oovv(m,i,e,b)*(t2(m,j,e,a) - 0.5*c_oovv(m,j,a,e)) - &
-                           0.5*v_ovov(m,e,i,b)*t2(m,j,e,a) 
+                           I_voov(b,j,i,a) = I_voov(b,j,i,a) + (v_oovv(m,i,e,b)-0.5*v_oovv(m,i,b,e))*t2(m,j,e,a) - &
+                           0.5*v_oovv(m,i,e,b)*c_oovv(m,j,a,e) 
                         end do
                      end do
                   end do
@@ -1336,7 +1337,7 @@ module ccsd
 
          do i = 1, nocc
             do j = 1, nocc
-               I_oo_p(j,i) = sum((2*v_oovo(:,i,:,j)-v_oovo(i,:,:,j))*t1(:,:)) + sum((v_oovv(:,i,:,:)-v_oovv(i,:,:,:))*t2(:,j,:,:))
+               I_oo_p(j,i) = sum((2*v_oovo(:,i,:,j)-v_oovo(i,:,:,j))*t1(:,:)) + sum(v_oovv(:,i,:,:)*asym_t2(:,j,:,:))
             end do
          end do
 
@@ -1390,8 +1391,8 @@ module ccsd
             do i = 1, nocc
                do j = 1, nocc
                   do b = 1, nvirt
-                     I_voov(b,j,i,a) = v_oovv(i,j,b,a) + sum(v_oovv(i,:,b,:)*(t2(:,j,:,a)-0.5*c_oovv(:,j,a,:))) &
-                     - 0.5*sum(v_ovov(:,b,i,:)*t2(j,:,a,:)) + sum(v_vvov(b,:,i,a)*t1(j,:)) - sum(v_oovo(i,:,b,j)*t1(:,a))
+                     I_voov(b,j,i,a) = v_oovv(i,j,b,a) + sum((v_oovv(i,:,b,:)-0.5*v_oovv(i,:,:,b))*t2(:,j,:,a)) &
+                     -0.5*sum(v_oovv(:,i,:,b)*c_oovv(:,j,a,:)) + sum(v_vvov(b,:,i,a)*t1(j,:)) - sum(v_oovo(i,:,b,j)*t1(:,a))
                   end do
                end do
             end do
