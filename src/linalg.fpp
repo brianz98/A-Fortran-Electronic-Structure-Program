@@ -107,7 +107,7 @@ module linalg
          ! The beta parameter, named in analogy to ?gemm, if provided, performs the following operation:
          ! out_arr = beta*out_arr + reshape(in_arr)
          
-         ! [todo] - Checks on arr_order
+         ! [todo] - Checks on arr_order, a possible in-place algorithm? (Will be more complicated than the antisymmetrisation, as more than a pairwise operation is possible. A general version is probably beyond the scope)
 
          real(dp), dimension(:,:,:,:), intent(in) :: in_arr
          character(4), intent(in) :: arr_order
@@ -155,5 +155,188 @@ $:','.join([INDEX_LOOKUP[int(_)-1] for _ in ORD_STR])
             
       end subroutine omp_reshape
 
+      subroutine antisymmetrise(in_arr, out_arr, order, inplace)
+
+         ! Performs one variation of the operations:
+         ! A_ij^ab = 2*A_ij^ab - A_ji^ab
+         ! The in-place algorithm takes care not to read from sections of the tensor that has already been transformed.
+         
+         character(4), intent(in) :: order
+         logical, intent(in) :: inplace
+         real(dp), dimension(:,:,:,:), intent(inout) :: in_arr
+         real(dp), dimension(:,:,:,:), intent(out) :: out_arr
+
+         integer :: i, j, k, l, iu, ju, ku, lu
+         real(dp) :: tmp_untr, tmp_tr
+
+         iu = ubound(in_arr, dim=1)
+         ju = ubound(in_arr, dim=2)
+         ku = ubound(in_arr, dim=3)
+         lu = ubound(in_arr, dim=4)
+
+         if (inplace) then
+            if (order == '1243') then
+               !$omp parallel do default(none) shared(in_arr, out_arr, iu, ju, ku, lu) private(tmp_untr, tmp_tr)
+               do l = 1, lu
+                  do k = 1, l
+                     do j = 1, ju
+                        do i = 1, iu
+                           tmp_untr = in_arr(i,j,k,l)
+                           tmp_tr = in_arr(i,j,l,k)
+                           in_arr(i,j,k,l) = 2*tmp_untr - tmp_tr
+                           in_arr(i,j,l,k) = 2*tmp_tr - tmp_untr
+                        end do
+                     end do
+                  end do
+               end do
+               !$omp end parallel do
+            end if
+            if (order == '2134') then
+               !$omp parallel do default(none) shared(in_arr, out_arr, iu, ju, ku, lu) private(tmp_untr, tmp_tr)
+               do l = 1, lu
+                  do k = 1, ku
+                     do j = 1, ju
+                        do i = 1, j
+                           tmp_untr = in_arr(i,j,k,l)
+                           tmp_tr = in_arr(j,i,k,l)
+                           in_arr(i,j,k,l) = 2*tmp_untr - tmp_tr
+                           in_arr(j,i,k,l) = 2*tmp_tr - tmp_untr
+                        end do
+                     end do
+                  end do
+               end do
+               !$omp end parallel do
+            end if
+            if (order == '4231') then
+               !$omp parallel do default(none) shared(in_arr, out_arr, iu, ju, ku, lu) private(tmp_untr, tmp_tr)
+               do l = 1, lu
+                  do k = 1, ku
+                     do j = 1, ju
+                        do i = 1, l
+                           tmp_untr = in_arr(i,j,k,l)
+                           tmp_tr = in_arr(l,j,k,i)
+                           in_arr(i,j,k,l) = 2*tmp_untr - tmp_tr
+                           in_arr(l,j,k,i) = 2*tmp_tr - tmp_untr
+                        end do
+                     end do
+                  end do
+               end do
+               !$omp end parallel do
+            end if
+         else
+            if (order == '1243') then
+               !$omp parallel do default(none) shared(in_arr, out_arr, iu, ju, ku, lu) private(tmp_untr, tmp_tr)
+               do l = 1, lu
+                  do k = 1, l
+                     do j = 1, ju
+                        do i = 1, iu
+                           tmp_untr = in_arr(i,j,k,l)
+                           tmp_tr = in_arr(i,j,l,k)
+                           out_arr(i,j,k,l) = 2*tmp_untr - tmp_tr
+                        end do
+                     end do
+                  end do
+               end do
+               !$omp end parallel do
+            end if
+            if (order == '2134') then
+               !$omp parallel do default(none) shared(in_arr, out_arr, iu, ju, ku, lu) private(tmp_untr, tmp_tr)
+               do l = 1, lu
+                  do k = 1, ku
+                     do j = 1, ju
+                        do i = 1, iu
+                           tmp_untr = in_arr(i,j,k,l)
+                           tmp_tr = in_arr(j,i,k,l)
+                           out_arr(i,j,k,l) = 2*tmp_untr - tmp_tr
+                        end do
+                     end do
+                  end do
+               end do
+               !$omp end parallel do
+            end if
+            if (order == '4231') then
+               !$omp parallel do default(none) shared(in_arr, out_arr, iu, ju, ku, lu) private(tmp_untr, tmp_tr)
+               do l = 1, lu
+                  do k = 1, ku
+                     do j = 1, ju
+                        do i = 1, iu
+                           tmp_untr = in_arr(i,j,k,l)
+                           tmp_tr = in_arr(l,j,k,i)
+                           out_arr(i,j,k,l) = 2*tmp_untr - tmp_tr
+                        end do
+                     end do
+                  end do
+               end do
+               !$omp end parallel do
+            end if
+         end if
+
+      end subroutine antisymmetrise
+
+      subroutine deantisymmetrise(arr, order)
+         ! Performs one variation of the operations in place:
+         ! A_ij^ab = 2*A_ij^ab - A_ji^ab
+         
+         character(4), intent(in) :: order
+         real(dp), dimension(:,:,:,:), intent(inout) :: arr
+
+         integer :: i, j, k, l, iu, ju, ku, lu
+         real(dp) :: tmp_sum, tmp_diff
+
+         iu = ubound(arr, dim=1)
+         ju = ubound(arr, dim=2)
+         ku = ubound(arr, dim=3)
+         lu = ubound(arr, dim=4)
+
+         if (order == '1243') then
+            !$omp parallel do default(none) shared(arr, iu, ju, ku, lu) private(tmp_sum, tmp_diff)
+            do l = 1, lu
+               do k = 1, l
+                  do j = 1, ju
+                     do i = 1, iu
+                        tmp_sum = arr(i,j,k,l) + arr(i,j,l,k)
+                        tmp_diff = (arr(i,j,k,l) - arr(i,j,l,k))/3
+                        arr(i,j,k,l) = (tmp_sum + tmp_diff)/2
+                        arr(i,j,l,k) = (tmp_sum - tmp_diff)/2
+                     end do
+                  end do
+               end do
+            end do
+            !$omp end parallel do
+         end if
+         if (order == '2134') then
+            !$omp parallel do default(none) shared(arr, iu, ju, ku, lu) private(tmp_sum, tmp_diff)
+            do l = 1, lu
+               do k = 1, ku
+                  do j = 1, ju
+                     do i = 1, j
+                        tmp_sum = arr(i,j,k,l) + arr(j,i,k,l)
+                        tmp_diff = (arr(i,j,k,l) - arr(j,i,k,l))/3
+                        arr(i,j,k,l) = (tmp_sum + tmp_diff)/2
+                        arr(j,i,k,l) = (tmp_sum - tmp_diff)/2
+                     end do
+                  end do
+               end do
+            end do
+            !$omp end parallel do
+         end if
+         if (order == '4231') then
+            !$omp parallel do default(none) shared(arr, iu, ju, ku, lu) private(tmp_sum, tmp_diff)
+            do l = 1, lu
+               do k = 1, ku
+                  do j = 1, ju
+                     do i = 1, l
+                        tmp_sum = arr(i,j,k,l) + arr(l,j,k,i)
+                        tmp_diff = (arr(i,j,k,l) - arr(l,j,k,i))/3
+                        arr(i,j,k,l) = (tmp_sum + tmp_diff)/2
+                        arr(l,j,k,i) = (tmp_sum - tmp_diff)/2
+                     end do
+                  end do
+               end do
+            end do
+            !$omp end parallel do
+         end if
+
+      end subroutine deantisymmetrise
       
 end module linalg

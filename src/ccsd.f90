@@ -1019,7 +1019,7 @@ module ccsd
 
          ! Build the "recursively generated" intermediates defined in Piecuch et al Table 1.
 
-         use linalg, only: dgemm_wrapper
+         use linalg, only: dgemm_wrapper, antisymmetrise, deantisymmetrise, omp_reshape
 
          type(system_t), intent(in) :: sys
          type(cc_amp_t), intent(in) :: cc_amp
@@ -1057,77 +1057,52 @@ module ccsd
          end do
          !$omp end do
 
+         !$omp end parallel
+
          ! ----------------------------------------------------------------
          ! I_ai = (2 v_aeim - v_eaim) t_me
          ! v_aeim = v_oovv(m,i,e,a), v_eaim = v_oovv(m,i,a,e)
-         !$omp do collapse(2) schedule(static, 10) 
-         do i = 1, nocc
-            do a = 1, nvirt
-               I_vo(a,i) = 0.0_p
-               do e = 1, nvirt
-                  do m = 1, nocc
-                     I_vo(a,i) = I_vo(a,i) + (2*v_oovv(m,i,e,a) - v_oovv(m,i,a,e))*t1(m,e)
-                  end do
-               end do
-            end do 
-         end do
-         !$omp end do
+         ! The layout suggests reading the indices like the letter 'n'
+         ! Using scratch as the dummy input if in place
+         call antisymmetrise(v_oovv, scratch, '1243', .true.)
+         allocate(reshape_tmp(nvirt,nocc,nocc,nvirt))
+         call omp_reshape(reshape_tmp, v_oovv, '3124')
+         call dgemm_wrapper('N','N',nocc*nvirt,1,nocc*nvirt,reshape_tmp,t1,I_vo)
+         !call deantisymmetrise(v_oovv, '1243')
+         deallocate(reshape_tmp)
 
          ! ----------------------------------------------------------------
-         !                                 |-> this part is done with reshapes and dgemm below, outside the parallel region
          ! I_ba = (2 v_beam - v_bema) t_me - (2 v_ebmn - v_bemn) c_mnea
          !  v_beam = v_vvov(e,b,m,a), v_bema = v_vvov(b,e,m,a)
          !  v_ebmn = v_oovv(n,m,b,e), v_bemn = v_oovv(n,m,e,b)
-         !$omp do collapse(2) schedule(static, 10) 
-         do a = 1, nvirt
-            do b = 1, nvirt
-               I_vv(b,a) = 0.0_p
-               do m = 1, nocc
-                  do e = 1, nvirt
-                     I_vv(b,a) = I_vv(b,a) + (2*v_vvov(e,b,m,a) - v_vvov(b,e,m,a))*t1(m,e)
-                  end do
-               end do
-            end do 
-         end do
-         !$omp end do
 
+         call antisymmetrise(v_vvov, scratch, '2134', .true.)
+         allocate(reshape_tmp(nvirt,nvirt,nocc,nvirt))
+         call omp_reshape(reshape_tmp, v_vvov, '2431')
+         call dgemm_wrapper('N','N',nvirt**2,1,nocc*nvirt,reshape_tmp,t1,I_vv)
+         call deantisymmetrise(v_vvov, '2134')
+         deallocate(reshape_tmp)
+
+         allocate(reshape_tmp(nvirt,nocc,nocc,nvirt))
+         ! Remember v_oovv is still antisymmetrised at this point!
+         call omp_reshape(reshape_tmp, v_oovv, '4123')
+         call dgemm_wrapper('N','N',nvirt,nvirt,nocc**2*nvirt,reshape_tmp,c_oovv,I_vv,alpha=-1.0_p,beta=1.0_p)
+         deallocate(reshape_tmp)
+         call deantisymmetrise(v_oovv, '1243')
+         
          ! ----------------------------------------------------------------
-         !                                  |-> ditto above, cont'd outside parallel region
          ! I_ji' = (2 v_jeim - v_ejim) t_me + (v_efmi - v_efim) t_mjef
          !  v_jeim = v_oovo(m,i,e,j), v_ejim = v_oovo(i,m,e,j)
          !  v_efmi = v_oovv(m,i,e,f), v_efim = v_oovv(m,i,f,e)
          !  to align the indices the second term has to be broken into two sums, and t_mjef = t_jmfe is used
-         !$omp do collapse(2) schedule(static, 10)
-         do i = 1, nocc
-            do j = 1, nocc
-               I_oo_p(j,i) = 0.0_p
-               do e = 1, nvirt
-                  do m = 1, nocc
-                     I_oo_p(j,i) = I_oo_p(j,i) + (2*v_oovo(m,i,e,j) - v_oovo(i,m,e,j))*t1(m,e)
-                  end do
-               end do
-            end do 
-         end do
-         !$omp end do
 
-         !$omp end parallel
-
-         ! ----------------------------------------------------------------
-         ! (Cont'd)
-         ! I_ba -= (2 v_ebmn - v_bemn) c_mnea
-         allocate(scratch(nocc,nocc,nvirt,nvirt))
-         call omp_reshape(scratch, v_oovv, '1243')
-         scratch = 2*v_oovv - scratch
-
-         allocate(reshape_tmp(nvirt,nocc,nocc,nvirt))
-         call omp_reshape(reshape_tmp, scratch, '3214')
-         deallocate(scratch)
-         call dgemm_wrapper('N','N',nvirt,nvirt,nocc**2*nvirt,reshape_tmp,c_oovv,I_vv,alpha=-1.0_p,beta=1.0_p)
+         call antisymmetrise(v_oovo, scratch, '2134', .true.)
+         allocate(reshape_tmp(nocc,nocc,nocc,nvirt))
+         call omp_reshape(reshape_tmp, v_oovo, '4213')
+         call dgemm_wrapper('N','N',nocc**2,1,nocc*nvirt,reshape_tmp,t1,I_oo_p)
          deallocate(reshape_tmp)
+         call deantisymmetrise(v_oovo, '2134')
 
-         ! ----------------------------------------------------------------
-         ! (Cont'd)
-         ! I_ji' += v_efmi*asymt2_mjef
          allocate(reshape_tmp(nocc,nvirt,nvirt,nocc))
          ! mief -> mfei
          call omp_reshape(reshape_tmp, v_oovv, '1432')
@@ -1205,6 +1180,38 @@ module ccsd
          ! v_mbie = v_ovov(m,e,i,b), both contracted indices in front
          ! v_beia = v_vvov(b,e,i,a), can't really help
          ! v_jbim t_ma = v_oovo(i,m,b,j) * t1(m,a)
+         allocate(reshape_tmp(nvirt,nocc,nocc,nvirt))
+         ! imbe -> bime, 3124
+         call omp_reshape(reshape_tmp, v_oovv, '3124')
+         ! 2bime - eimb
+         call antisymmetrise(reshape_tmp, scratch, '4231', .true.)
+         
+         ! We lay out bjia as biaj for the purposes of the dgemm's
+         allocate(scratch_2(nvirt,nocc,nvirt,nocc))
+         allocate(scratch(nocc,nvirt,nvirt,nocc))
+         ! mjea -> meaj, 1342
+         call omp_reshape(scratch, t2, '1342')
+         ! bime, meaj -> biaj
+         call dgemm_wrapper('N','N',nocc*nvirt,nocc*nvirt,nocc*nvirt,reshape_tmp,scratch,scratch_2,alpha=0.5_dp)
+         deallocate(scratch)
+         ! Return reshape_tmp to bime
+         call deantisymmetrise(reshape_tmp, '4231')
+
+         allocate(scratch(nocc,nvirt,nvirt,nocc))
+         ! mjae -> meaj, 1432
+         call omp_reshape(scratch, c_oovv, '1432')
+         call dgemm_wrapper('N','N',nocc*nvirt,nocc*nvirt,nocc*nvirt,reshape_tmp,scratch,scratch_2,alpha=-0.5_dp,beta=1.0_dp)
+         ! Reverting to normal layout, biaj -> bjia
+         call omp_reshape(I_voov,scratch_2,'1423')
+
+         deallocate(scratch_2, scratch, reshape_tmp)
+         ! ----------------------------------------------------------------
+         ! Cont'd: I_bjia -= v_bjim t_ma
+         allocate(reshape_tmp(nvirt,nocc,nocc,nocc))
+         call omp_reshape(reshape_tmp, v_oovo, '3412')
+         call dgemm_wrapper('N','N',nocc**2*nvirt,nvirt,nocc,reshape_tmp,t1,I_voov,alpha=-1.0_p,beta=1.0_p)
+         deallocate(reshape_tmp)
+
 
          !$omp parallel default(none) shared(sys, cc_amp, cc_int) 
 
@@ -1213,13 +1220,9 @@ module ccsd
             do i = 1, nocc
                do b = 1, nvirt
                   do j = 1, nocc
-                     I_voov(b,j,i,a) = v_oovv(j,i,a,b)
+                     I_voov(b,j,i,a) = I_voov(b,j,i,a) + v_oovv(j,i,a,b)
                      do e = 1, nvirt
                         I_voov(b,j,i,a) = I_voov(b,j,i,a) + v_vvov(b,e,i,a)*t1(j,e)
-                        do m = 1, nocc
-                           I_voov(b,j,i,a) = I_voov(b,j,i,a) + (v_oovv(m,i,e,b)-0.5*v_oovv(m,i,b,e))*t2(m,j,e,a) - &
-                           0.5*v_oovv(m,i,e,b)*c_oovv(m,j,a,e) 
-                        end do
                      end do
                   end do
                end do
@@ -1266,13 +1269,7 @@ module ccsd
          !$omp end do
          !$omp end parallel
 
-         ! ----------------------------------------------------------------
-         ! Cont'd: I_bjia -= v_bjim t_ma
-         allocate(reshape_tmp(nvirt,nocc,nocc,nocc))
-         call omp_reshape(reshape_tmp, v_oovo, '3412')
-         call dgemm_wrapper('N','N',nocc**2*nvirt,nvirt,nocc,reshape_tmp,t1,I_voov,alpha=-1.0_p,beta=1.0_p)
-         deallocate(reshape_tmp)
-
+         
          ! ----------------------------------------------------------------
          ! Cont'd: I_ciab' -= v_ciam t_mb
          allocate(reshape_tmp(nvirt,nocc,nvirt,nocc))
@@ -1969,7 +1966,7 @@ module ccsd
          
          !$omp parallel default(none) &
          !$omp private(tmp_t3_D, tmp_t3, z3, z3_bar, tmp_y, t_bar, ierr, reshape_tmp, tmp_m3) &
-         !$omp shared(sys, int_store, t2_reshape, v_vovv, v_ovoo, c_oovv, e_T, D_T, e_CR) 
+         !$omp shared(sys, int_store, t2_reshape, v_vovv, v_ovoo, c_oovv) reduction(+:e_T, D_T, e_CR)
 
          if (doing_R .or. doing_CR) then
             ! Both need the denominator, which require c_oovv
@@ -1987,33 +1984,39 @@ module ccsd
          end if
 
          ! Declare heap-allocated arrays inside parallel region
+         
+         ! t3*D, t3, and t3_bar are always needed
          allocate(tmp_t3_D(nvirt,nvirt,nvirt), source=0.0_p, stat=ierr)
          call check_allocate('tmp_t3_D', nvirt**3, ierr)
          allocate(tmp_t3(nvirt,nvirt,nvirt), source=0.0_p, stat=ierr)
          call check_allocate('tmp_t3', nvirt**3, ierr)
-         allocate(reshape_tmp(nvirt,nvirt,nvirt), source=0.0_p, stat=ierr)
-         call check_allocate('reshape_tmp', nvirt**3, ierr)
+
+         allocate(t_bar(nvirt,nvirt,nvirt), source=0.0_p, stat=ierr)
+         call check_allocate('t_bar', nvirt**3, ierr)
+         
 
          if (doing_T) then
+            ! If doing (T), additionally need z3 and z3_bar
             allocate(z3(nvirt,nvirt,nvirt), source=0.0_p, stat=ierr)
             call check_allocate('z3', nvirt**3, ierr)
-            allocate(t_bar(nvirt,nvirt,nvirt), source=0.0_p, stat=ierr)
-            call check_allocate('t_bar', nvirt**3, ierr)
+            allocate(z3_bar(nvirt,nvirt,nvirt), source=0.0_p, stat=ierr)
+            call check_allocate('z3_bar', nvirt**3, ierr)            
          end if
          
          if (doing_R .or. doing_CR) then
+            ! The [T]/(T) denominator needs y
             allocate(tmp_y(nvirt,nvirt,nvirt), source=0.0_p, stat=ierr)
             call check_allocate('tmp_y', nvirt**3, ierr)
-            allocate(z3_bar(nvirt,nvirt,nvirt), source=0.0_p, stat=ierr)
-            call check_allocate('z3_bar', nvirt**3, ierr)
+            
          end if
 
          if (doing_CR) then
+            ! The generlised moment is needed only for CR methods
             allocate(tmp_m3(nvirt,nvirt,nvirt), source=0.0_p, stat=ierr)
             call check_allocate('tmp_m3', nvirt**3, ierr)
          end if
 
-         ! We use avoid the storage of full triples (six-dimensional array..) and instead use the strategy of 
+         ! We avoid the storage of full triples (six-dimensional array..) and instead use the strategy of 
          ! batched triples storage, denoted W^{ijk}(abc) in (https://doi.org/10.1016/0009-2614(91)87003-T).
          ! We could of course only compute one element in a loop iteration but that will probably result in bad floating point
          ! performance, here for each thread/loop iteration we use the Fortran intrinsic sum, 
@@ -2023,7 +2026,7 @@ module ccsd
          ! Eq. 52: E(T) = (t_bar_abc^ijk + z_abc^ijk) t_ijk^abc(2) D_ijk^abc
          ! t_bar_abcijk = 4/3 t_ijkabc -2t_ijkacb + 2/3 t_ijkbca
          ! However, as all indices are contracted, the ordering of the indices doesn't matter
-         !$omp do schedule(static, 10) collapse(3) reduction(+:e_T, D_T, e_CR)
+         !$omp do schedule(static, 10) collapse(3)
          do i = 1, nocc
             do j = 1, nocc
                do k = 1, nocc
@@ -2039,14 +2042,14 @@ module ccsd
                            ! formulation of CCSD(T), unfortunately in that case the reshape involved was a P(i/jk)P(a/bc),
                            ! which was natually factorisable into ijk and abc, so we can reshape only the abc slices while 
                            ! holding ijk fixed. However here the transpositions are 'correlated' and aren't factorisable.
-                           ! There might be a way to do it but I can't think of one for now. Anyway the cost of reshapes might 
-                           ! be similar to the vector operations anyway(?)
+                           ! There might be a way to do it but I can't think of one for now. 
                            tmp_t3_D(a,b,c) = sum(t2_reshape(:,a,j,i)*v_vovv(:,k,b,c)) - sum(t2(:,i,b,a)*v_ovoo(:,c,j,k)) + &
                                              sum(t2_reshape(:,b,i,j)*v_vovv(:,k,a,c)) - sum(t2(:,j,a,b)*v_ovoo(:,c,i,k)) + &
                                              sum(t2_reshape(:,c,j,k)*v_vovv(:,i,b,a)) - sum(t2(:,k,b,c)*v_ovoo(:,a,j,i)) + &
                                              sum(t2_reshape(:,a,k,i)*v_vovv(:,j,c,b)) - sum(t2(:,i,c,a)*v_ovoo(:,b,k,j)) + &
                                              sum(t2_reshape(:,b,k,j)*v_vovv(:,i,c,a)) - sum(t2(:,j,c,b)*v_ovoo(:,a,k,i)) + &
                                              sum(t2_reshape(:,c,i,k)*v_vovv(:,j,a,b)) - sum(t2(:,k,a,c)*v_ovoo(:,b,i,j))
+                           
                            tmp_t3(a,b,c) = tmp_t3_D(a,b,c)/(e(i)+e(j)+e(k)-e(a+nocc)-e(b+nocc)-e(c+nocc))
                            if (doing_T) then
                               ! The z3 array as defined in eq.60 of Piecuch
@@ -2070,12 +2073,10 @@ module ccsd
                         end do
                      end do
                   end do
+
+                  
                   ! Do reshapes for t_bar
-                  t_bar = 4*tmp_t3/3
-                  reshape_tmp = reshape(tmp_t3,shape(t_bar),order=(/1,3,2/))
-                  t_bar = t_bar - 2*reshape_tmp
-                  reshape_tmp = reshape(tmp_t3,shape(t_bar),order=(/3,1,2/))
-                  t_bar = t_bar + 2*reshape_tmp/3
+                  call make_x_bar(t_bar, tmp_t3, nvirt)
 
                   ! Summary of the family of (T) corrections:
                   ! E_[T] = t_bar*t3_D
@@ -2088,11 +2089,14 @@ module ccsd
                   if (doing_T .and. (doing_R .or. doing_CR)) then
                      ! (C)RCCSD(T) involves z3_bar whereas (C)RCCSD[T] does not
                      ! If we're doing (C)RCCSD(T)
-                     z3_bar = 4*z3/3
-                     reshape_tmp = reshape(z3,shape(z3_bar),order=(/1,3,2/))
-                     z3_bar = z3_bar - 2*reshape_tmp
-                     reshape_tmp = reshape(z3,shape(z3_bar),order=(/3,1,2/))
-                     z3_bar = z3_bar + 2*reshape_tmp/3
+                     
+                     call make_x_bar(z3_bar, z3, nvirt)
+
+                     !z3_bar = 4*z3/3
+                     !reshape_tmp = reshape(z3,shape(z3_bar),order=(/1,3,2/))
+                     !z3_bar = z3_bar - 2*reshape_tmp
+                     !reshape_tmp = reshape(z3,shape(z3_bar),order=(/3,1,2/))
+                     !z3_bar = z3_bar + 2*reshape_tmp/3
                   end if
                   
                   if (.not. doing_CR) then
@@ -2120,6 +2124,7 @@ module ccsd
             ! These terms are always present in the denominator
             D_T = D_T + 1 + 2*sum(t1**2) + sum(asym_t2*c_oovv)
          end if
+         print*, 'denominator: ', D_T
 
          ! Get the name of the calculation right
          calcname = 'CCSD'
@@ -2134,18 +2139,62 @@ module ccsd
 
          if ((.not. sys%ccsd_t_renorm) .and. (.not. sys%ccsd_t_comp_renorm)) then
             ! No additional denominator
-            write(iunit, '(1X, A, 1X, F15.9)') 'Restricted '//trim(calcname)//' correlation energy (Hartree):', e_T
-            sys%e_ccsd_t = e_T
+            write(iunit, '(1X, A, 1X, F15.9)') 'Restricted '//trim(calcname)//' correlation energy (Hartree):', sys%e_ccsd+e_T
+            sys%e_ccsd_t = sys%e_ccsd+e_T
          else if (sys%ccsd_t_renorm) then
-            write(iunit, '(1X, A, 1X, F15.9)') 'Restricted '//trim(calcname)//' correlation energy (Hartree):', e_T/D_T
-            sys%e_ccsd_t = e_T/D_T
+            write(iunit, '(1X, A, 1X, F15.9)') 'Restricted '//trim(calcname)//' correlation energy (Hartree):', sys%e_ccsd+e_T/D_T
+            sys%e_ccsd_t = sys%e_ccsd+e_T/D_T
          else if (sys%ccsd_t_comp_renorm) then
-            write(iunit, '(1X, A, 1X, F15.9)') 'Restricted '//trim(calcname)//' correlation energy (Hartree):', e_CR/D_T
-            sys%e_ccsd_t = e_CR/D_T
+            write(iunit, '(1X, A, 1X, F15.9)') 'Restricted '//trim(calcname)//' correlation energy (Hartree):', sys%e_ccsd+e_CR/D_T
+            sys%e_ccsd_t = sys%e_ccsd+e_CR/D_T
          end if
          end associate
 
       end subroutine do_ccsd_t_spatial
+
+      subroutine make_x_bar(x_bar, x, nvirt)
+         ! Makes the x_bar quantity defined in eq. 55 in Piecuch et al.,
+         ! but the original equation doesn't work, after looking into GAMESS source code it appears that
+         ! we should do:
+         ! x_{abc}^{ijk}_bar (== abc) = 3*{8*(abc)-4*[(acb)+(cba)+(bac)]+2*[(bca)+(cab)]}
+
+         use error_handling, only: check_allocate
+
+         real(p), intent(in) :: x(:,:,:)
+         integer, intent(in) :: nvirt
+         real(p), intent(out) :: x_bar(:,:,:)
+
+         real(p), allocatable :: reshape_tmp(:,:,:)
+         integer :: ierr
+
+         allocate(reshape_tmp(nvirt,nvirt,nvirt), source=0.0_p, stat=ierr)
+         call check_allocate('reshape_tmp', nvirt**3, ierr)
+
+         !This is what the paper suggests that we do, but it doesn't work...
+         x_bar = 4*x/3
+         reshape_tmp = reshape(x,shape(x_bar),order=(/1,3,2/))
+         x_bar = x_bar - 2*reshape_tmp
+         reshape_tmp = reshape(x,shape(x_bar),order=(/3,1,2/))
+         x_bar = x_bar + 2*reshape_tmp/3
+
+         ! This is what GAMESS source code does...
+
+         !x_bar = 8*x
+         !reshape_tmp = reshape(x,shape(x_bar),order=(/1,3,2/))
+         !x_bar = x_bar - 4*reshape_tmp
+         !reshape_tmp = reshape(x,shape(x_bar),order=(/3,2,1/))
+         !x_bar = x_bar - 4*reshape_tmp
+         !reshape_tmp = reshape(x,shape(x_bar),order=(/2,1,3/))
+         !x_bar = x_bar - 4*reshape_tmp
+         !reshape_tmp = reshape(x,shape(x_bar),order=(/3,1,2/))
+         !x_bar = x_bar + 2*reshape_tmp
+         !reshape_tmp = reshape(x,shape(x_bar),order=(/2,3,1/))
+         !x_bar = x_bar + 2*reshape_tmp
+         !x_bar = x_bar*3
+
+         deallocate(reshape_tmp)
+
+      end subroutine make_x_bar
 
       subroutine build_cr_ccsd_t_intermediates(sys, cc_int, cc_amp, int_store_cc)
 
