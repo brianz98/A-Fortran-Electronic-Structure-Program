@@ -2102,7 +2102,7 @@ module ccsd
                   ! for R/CCSD(T)/[T] we always need the base quantity of t_bar*t3_D
                   tmp = sum(t_bar*tmp_t3_D)
                   e_T = e_T + tmp
-                  if (doing_T) e_TT = e_TT + tmp + sum(z3*tmp_t3_D)
+                  if (doing_T) e_TT = e_TT + tmp + sum(z3_bar*tmp_t3_D)
 
                   if (doing_CR) then
                      tmp = sum(t_bar*tmp_m3)
