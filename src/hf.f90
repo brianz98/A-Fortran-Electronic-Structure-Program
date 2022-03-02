@@ -36,9 +36,12 @@ module hf
          logical :: conv = .false.
          type(diis_t) :: diis
 
+         integer(kind=8) :: c_max, c_rate, t0, t1
+
          write(iunit, '(1X, 23("-"))')
          write(iunit, '(1X, A)') 'Restricted Hartree-Fock'
          write(iunit, '(1X, 23("-"))')
+         call system_clock(count=t0, count_rate=c_rate, count_max=c_max)
 
          allocate(st%density_old(sys%nbasis,sys%nbasis), source=0.0_p)
 
@@ -74,6 +77,10 @@ module hf
          ! ####################
          ! Iterative SCF solver
          ! ####################
+         write(iunit, '(75("-"))')
+         write(iunit, '(1X, A, 3X, A, 3X, A, 3X, A, 3X, A)') &
+            'Iteration','     Energy    ','    deltaE     ','   delta RMS D ', '  Time  '
+         write(iunit, '(75("-"))')
 
          do iter = 1, sys%scf_maxiter
             ! F' is the fock matrix in orthogonal AO basis, where F is in the original non-orthogonal basis
@@ -91,7 +98,14 @@ module hf
 
             ! E_el = \sum_{\mu\nu} D_{\mu\nu} (H^{core}_{\mu\nu} + F_{\mu\nu})
             call update_scf_energy(sys, density, fockmat%ao, st, int_store, conv)
+
+            call system_clock(t1)
+            write(iunit, '(1X, I9, 3X, F15.10, 3X, F15.10, 3X, F15.10, 3X, F8.6)') &
+               iter, st%energy, (st%energy-st%energy_old), st%rms, (real(t1-t0, kind=dp)/c_rate)
+            t0=t1
+
             if (conv) then
+               write(iunit, '(75("-"))')
                write(iunit, '(1X, A)') 'Convergence reached within tolerance.'
                write(iunit, '(1X, A, 1X, F15.8)') 'Final SCF Energy (Hartree):', st%energy
                write(iunit, '(1X, A)') 'Orbital energies (Hartree):'
@@ -106,7 +120,6 @@ module hf
                allocate(sys%canon_levels, source=fockmat%W)
                exit
             end if
-            write(iunit, '(1X, A, 1X, I3, F15.8)') 'Iteration', iter, st%energy
 
             call build_fock(sys, density, fockmat%ao, int_store)
 
@@ -273,7 +286,8 @@ module hf
          st%energy_old = st%energy
          st%energy = sum(density * (int_store%core_hamil + fock))
 
-         if (sqrt(sum((density-st%density_old)**2))<sys%scf_d_tol .and. abs(st%energy-st%energy_old)<sys%scf_e_tol) conv = .true.
+         st%rms = sqrt(sum((density-st%density_old)**2))
+         if ((st%rms<sys%scf_d_tol) .and. (abs(st%energy-st%energy_old)<sys%scf_e_tol)) conv = .true.
          st%density_old = density
 
       end subroutine update_scf_energy

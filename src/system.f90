@@ -68,6 +68,7 @@ module system
       integer :: iter = 0
       real(p) :: energy = 0.0_p
       real(p) :: energy_old = 0.0_p
+      real(p) :: rms = 0.0_p
       real(p), allocatable :: density_old(:,:)
       real(p), allocatable :: t2_old(:,:,:,:)
    end type state_t

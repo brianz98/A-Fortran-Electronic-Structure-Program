@@ -302,6 +302,7 @@ module ccsd
          write(iunit, '(1X, A)') 'Initialise CC intermediate tensors and DIIS auxilliary arrays...'
          call init_cc(sys, cc_amp, cc_int, int_store, restricted=.true.)
          allocate(st%t2_old, source=cc_amp%t_ijab)
+         st%t2_old = 0.0_p
          call init_diis_cc_t(sys, diis)
 
          call system_clock(t1)
@@ -311,6 +312,13 @@ module ccsd
          t0=t1
 
          write(iunit, '(1X, A)') 'Initialisation done, now entering iterative CC solver...'
+         call update_cc_energy(sys, st, cc_int, cc_amp, conv, restricted=.true.)
+         write(iunit, '(75("-"))')
+         write(iunit, '(1X, A, 3X, A, 3X, A, 3X, A, 3X, A)') &
+            'Iteration','     Energy    ','    deltaE     ','  delta RMS T2 ', '  Time  '
+         write(iunit, '(75("-"))')
+         write(iunit, '(1X, A9, 3X, F15.12, 3X, F15.12, 3X, F15.12)')&
+            'MP1', st%energy, (st%energy-st%energy_old), st%rms
 
          debug = .false.
 
@@ -341,9 +349,11 @@ module ccsd
 
             call update_cc_energy(sys, st, cc_int, cc_amp, conv, restricted=.true.)
             call system_clock(t1)
-            write(iunit, '(1X, A, 1X, I2, 2X, F15.12, 2X, F8.6, 1X, A)') 'Iteration',iter,st%energy,real(t1-t0, kind=dp)/c_rate,'s'
+            write(iunit, '(1X, I9, 3X, F15.12, 3X, F15.12, 3X, F15.12, 3X, F8.6)') &
+               iter, st%energy, (st%energy-st%energy_old), st%rms, (real(t1-t0, kind=dp)/c_rate)
             t0=t1
             if (conv) then
+               write(iunit, '(75("-"))')
                write(iunit, '(1X, A)') 'Convergence reached within tolerance.'
                write(iunit, '(1X, A, 1X, F15.12)') 'Final CCSD Energy (Hartree):', st%energy
                ! The 'T1 diagnostic' as defined by https://doi.org/10.1007/978-94-011-0193-6_2
@@ -1783,6 +1793,7 @@ module ccsd
          st%energy = ecc
          st%t2_old = t2
          if (sqrt(rmst2) < sys%ccsd_t_tol .and. abs(st%energy-st%energy_old) < sys%ccsd_e_tol) conv = .true.
+         st%rms = rmst2
 
          end associate
 

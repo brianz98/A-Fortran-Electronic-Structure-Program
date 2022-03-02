@@ -210,10 +210,15 @@ module integrals
         end function eri_ind
 
         subroutine print_sys_info(sys, int_store)
+            
+            use, intrinsic :: iso_fortran_env, only: iostat_end 
             use system
 
             type(system_t), intent(in) :: sys
             type(int_store_t), intent(in) :: int_store
+
+            integer :: ir, ios
+            character(255) :: line
 
             write(iunit, '(1X, 20("-"))')
             write(iunit, '(1X, A)') 'System information'
@@ -227,6 +232,21 @@ module integrals
             write(iunit, '(1X, A, 1X, ES8.2)') 'scf_d_tol:', sys%scf_d_tol
             write(iunit, '(1X, A, 1X, ES8.2)') 'ccsd_e_tol:', sys%ccsd_e_tol
             write(iunit, '(1X, A, 1X, ES8.2)') 'ccsd_t_tol:', sys%ccsd_t_tol
+            write(iunit, '(1X, A, 1X, I0)') 'Number of SCF DIIS error matrices:', sys%scf_diis_n_errmat
+            write(iunit, '(1X, A, 1X, I0)') 'Number of CCSD DIIS error matrices:', sys%ccsd_diis_n_errmat
+            write(iunit, '(1X, A, 1X, I0)') 'Maximum number of SCF iterations:', sys%scf_maxiter
+            write(iunit, '(1X, A, 1X, I0)') 'Maximum number of CCSD iterations:', sys%ccsd_maxiter
+
+            write(iunit, '(1X, A)') 'Printing out the input file...'
+            write(iunit, '(30("-"))')
+            open(newunit=ir, file='els.in', status='old', form='formatted')
+            do
+                read(ir, '(A)', iostat=ios) line
+                if (ios == iostat_end) exit
+                write(iunit, '(A)') trim(line)
+            end do
+            close(ir)
+            write(iunit, '(30("-"))')
 
         end subroutine print_sys_info
 
