@@ -246,6 +246,7 @@ module ccsd
 
                ! Copied for return 
                sys%e_ccsd = st%energy
+               sys%e_highest = st%energy
                call move_alloc(cc_amp%t_ia, int_store_cc%t1)
                call move_alloc(cc_amp%t_ijab, int_store_cc%t2)
                if (sys%calc_type == CC_SD_T) then
@@ -348,9 +349,9 @@ module ccsd
                ! The 'T1 diagnostic' as defined by https://doi.org/10.1007/978-94-011-0193-6_2
                ! For now since we're not doing actual unrestricted calculations this is only implemented for restricted,
                ! as the half of all t1 amp will be zero for 'unrestricted'.
-               t1_diagnostic = sqrt(sum(cc_amp%t_ia**2))/sqrt(real(sys%nel,kind=dp))
-               write(iunit, '(1X, A, 1X, F8.5)') 'T1 diagnostic:', t1_diagnostic
-               if (t1_diagnostic > 0.02_dp) then
+               sys%t1_diagnostic = sqrt(sum(cc_amp%t_ia**2))/sqrt(real(sys%nel,kind=dp))
+               write(iunit, '(1X, A, 1X, F8.5)') 'T1 diagnostic:', sys%t1_diagnostic
+               if (sys%t1_diagnostic > 0.02_dp) then
                   write(iunit, '(1X, A)') 'Significant multireference character detected, CCSD result might be unreliable!'
                end if
                if (sys%ccsd_t_comp_renorm) then
@@ -361,6 +362,7 @@ module ccsd
                end if
                ! Copied for return 
                sys%e_ccsd = st%energy
+               sys%e_highest = sys%e_ccsd
                call move_alloc(cc_amp%t_ia, int_store_cc%t1)
                call move_alloc(cc_amp%t_ijab, int_store_cc%t2)
                if (sys%calc_type == CC_SD_T) then
@@ -1892,6 +1894,7 @@ module ccsd
          !$omp end do
          !$omp end parallel
          sys%e_ccsd_t = e_T
+         sys%e_highest = e_T
          write(iunit, '(1X, A, 1X, F15.9)') 'Unrestricted CCSD(T) correlation energy (Hartree):', e_T
          end associate
 
@@ -1915,12 +1918,12 @@ module ccsd
          type(int_store_cc_t), intent(inout) :: int_store_cc
          type(system_t), intent(inout) :: sys
          type(int_store_t), intent(inout) :: int_store
-         character(*) :: calcname
+         character(*), intent(out) :: calcname
 
          integer :: i, j, k, a, b, c, ierr
          real(p), dimension(:,:,:), allocatable :: tmp_t3_D, tmp_t3, z3, t_bar, reshape_tmp, tmp_y, z3_bar, tmp_m3
          real(p), dimension(:,:,:,:), allocatable :: t2_reshape, v_vovv, v_ovoo, asym_t2, c_oovv
-         real(p) :: e_T, D_T, e_CR
+         real(p) :: e_T, e_TT, D_T, D_TT, e_CR, e_CRT, tmp
 
          write(iunit, '(1X, 10("-"))')
          write(iunit, '(1X, A)') 'CCSD(T)'
@@ -1963,10 +1966,14 @@ module ccsd
          e_T = 0.0_p
          D_T = 0.0_p
          e_CR = 0.0_p
+         e_TT = 0.0_p
+         D_TT = 0.0_p
+         e_CRT = 0.0_p
          
          !$omp parallel default(none) &
-         !$omp private(tmp_t3_D, tmp_t3, z3, z3_bar, tmp_y, t_bar, ierr, reshape_tmp, tmp_m3) &
-         !$omp shared(sys, int_store, t2_reshape, v_vovv, v_ovoo, c_oovv) reduction(+:e_T, D_T, e_CR)
+         !$omp private(tmp_t3_D, tmp_t3, z3, z3_bar, tmp_y, t_bar, ierr, reshape_tmp, tmp_m3, tmp) &
+         !$omp shared(sys, int_store, t2_reshape, v_vovv, v_ovoo, c_oovv) &
+         !$omp reduction(+:e_T, D_T, e_CR ,e_TT, D_TT, e_CRT)
 
          if (doing_R .or. doing_CR) then
             ! Both need the denominator, which require c_oovv
@@ -2088,30 +2095,26 @@ module ccsd
 
                   if (doing_T .and. (doing_R .or. doing_CR)) then
                      ! (C)RCCSD(T) involves z3_bar whereas (C)RCCSD[T] does not
-                     ! If we're doing (C)RCCSD(T)
-                     
+                     ! If we're doing (C)RCCSD(T)                     
                      call make_x_bar(z3_bar, z3, nvirt)
-
-                     !z3_bar = 4*z3/3
-                     !reshape_tmp = reshape(z3,shape(z3_bar),order=(/1,3,2/))
-                     !z3_bar = z3_bar - 2*reshape_tmp
-                     !reshape_tmp = reshape(z3,shape(z3_bar),order=(/3,1,2/))
-                     !z3_bar = z3_bar + 2*reshape_tmp/3
                   end if
                   
-                  if (.not. doing_CR) then
-                     ! for R/CCSD(T)/[T] we always need the base quantity of t_bar*t3_D
-                     e_T = e_T + sum(t_bar*tmp_t3_D)
-                     if (doing_T) e_T = e_T + sum(z3*tmp_t3_D)
-                  else
-                     e_CR = e_CR + sum(t_bar*tmp_m3)
-                     if (doing_T) e_CR = e_CR + sum(z3_bar*tmp_m3)
+                  ! for R/CCSD(T)/[T] we always need the base quantity of t_bar*t3_D
+                  tmp = sum(t_bar*tmp_t3_D)
+                  e_T = e_T + tmp
+                  if (doing_T) e_TT = e_TT + tmp + sum(z3*tmp_t3_D)
+
+                  if (doing_CR) then
+                     tmp = sum(t_bar*tmp_m3)
+                     e_CR = e_CR + tmp
+                     if (doing_T) e_CRT = e_CRT + tmp + sum(z3_bar*tmp_m3)
                   end if
 
                   if (doing_R .or. doing_CR) then
                      ! Separately accumulate the denominator
-                     D_T = D_T + sum(t_bar*tmp_y)
-                     if (doing_T) D_T = D_T + sum(z3_bar*tmp_y)
+                     tmp = sum(t_bar*tmp_y)
+                     D_T = D_T + tmp
+                     if (doing_T) D_TT = D_TT + tmp + sum(z3_bar*tmp_y)
                   end if
 
                end do
@@ -2122,10 +2125,41 @@ module ccsd
          
          if (doing_R .or. doing_CR) then
             ! These terms are always present in the denominator
-            D_T = D_T + 1 + 2*sum(t1**2) + sum(asym_t2*c_oovv)
+            tmp = 1 + 2*sum(t1**2) + sum(asym_t2*c_oovv)
+            D_T = D_T + tmp
+            if (doing_T) then
+               D_TT = D_TT + tmp
+            end if
          end if
-         print*, 'denominator: ', D_T
 
+         ! Now store everything
+         ! We must have performed CCSD[T] at a minimum
+         sys%e_ccsd_t = sys%e_ccsd + e_T
+         sys%e_highest = sys%e_ccsd_t
+         if (doing_T) then
+            ! We're doing at least CCSD(T)
+            sys%e_ccsd_tt = sys%e_ccsd + e_TT
+            sys%e_highest = sys%e_ccsd_tt
+         end if
+         if (doing_R .or. doing_CR) then
+            sys%e_rccsd_t = sys%e_ccsd + e_T/D_T
+            sys%e_highest = sys%e_rccsd_t
+            sys%D_T = D_T
+            if (doing_T) then
+               sys%e_rccsd_tt = sys%e_ccsd + e_TT/D_TT
+               sys%e_highest = sys%e_rccsd_tt
+            end if
+            if (doing_CR) then
+               sys%e_crccsd_t = sys%e_ccsd + e_CR/D_T
+               sys%e_highest = sys%e_crccsd_t
+               sys%D_TT = D_TT
+               if (doing_T) then
+                  sys%e_crccsd_tt = sys%e_ccsd + e_CRT/D_TT
+                  sys%e_highest = sys%e_crccsd_tt
+               end if
+            end if
+         end if
+         
          ! Get the name of the calculation right
          calcname = 'CCSD'
          if (sys%ccsd_t_paren) then
@@ -2137,17 +2171,8 @@ module ccsd
          if (sys%ccsd_t_renorm) calcname = 'renormalised '//trim(calcname)
          if (sys%ccsd_t_comp_renorm) calcname = 'completely renormalised '//trim(calcname)
 
-         if ((.not. sys%ccsd_t_renorm) .and. (.not. sys%ccsd_t_comp_renorm)) then
-            ! No additional denominator
-            write(iunit, '(1X, A, 1X, F15.9)') 'Restricted '//trim(calcname)//' correlation energy (Hartree):', sys%e_ccsd+e_T
-            sys%e_ccsd_t = sys%e_ccsd+e_T
-         else if (sys%ccsd_t_renorm) then
-            write(iunit, '(1X, A, 1X, F15.9)') 'Restricted '//trim(calcname)//' correlation energy (Hartree):', sys%e_ccsd+e_T/D_T
-            sys%e_ccsd_t = sys%e_ccsd+e_T/D_T
-         else if (sys%ccsd_t_comp_renorm) then
-            write(iunit, '(1X, A, 1X, F15.9)') 'Restricted '//trim(calcname)//' correlation energy (Hartree):', sys%e_ccsd+e_CR/D_T
-            sys%e_ccsd_t = sys%e_ccsd+e_CR/D_T
-         end if
+         write(iunit, '(1X, A, 1X, F15.9)') 'Restricted '//trim(calcname)//' correlation energy (Hartree):', sys%e_highest
+
          end associate
 
       end subroutine do_ccsd_t_spatial
@@ -2190,7 +2215,6 @@ module ccsd
          !x_bar = x_bar + 2*reshape_tmp
          !reshape_tmp = reshape(x,shape(x_bar),order=(/2,3,1/))
          !x_bar = x_bar + 2*reshape_tmp
-         !x_bar = x_bar*3
 
          deallocate(reshape_tmp)
 

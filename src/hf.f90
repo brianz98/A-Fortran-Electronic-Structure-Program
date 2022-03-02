@@ -101,6 +101,7 @@ module hf
 
                ! Copied for return / use in MP2
                sys%e_hf = st%energy
+               sys%e_highest = st%energy
                allocate(sys%canon_coeff, source=fockmat%A)
                allocate(sys%canon_levels, source=fockmat%W)
                exit

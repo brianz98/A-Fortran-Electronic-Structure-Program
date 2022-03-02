@@ -19,6 +19,7 @@ program main
     integer(kind=8) :: t0, t1, count_rate, count_max
     integer :: date_values(8)
     character(80) :: calcname
+    real(p) :: highest_theory_energy
 
     write(iunit, '(1X, 64("="))')
     write(iunit, '(1X, A)') 'A Fortran Electronic Structure Programme (AFESP)'
@@ -109,21 +110,60 @@ program main
             end if
         end if
     end if
-    end associate
+    
 
     write(iunit, '(1X, 64("="))')
     write(iunit, '(1X, A)') 'Final energy breakdown'
-    write(iunit, '(1X, A, 1X, F15.10)') 'E_HF:                   ', sys%e_hf + int_store%e_nuc
-    write(iunit, '(1X, A, 1X, F15.10)') 'E_MP2_corr:             ', sys%e_mp2
-    write(iunit, '(1X, A, 1X, F15.10)') 'E_MP2:                  ', sys%e_mp2 + sys%e_hf + int_store%e_nuc
-    write(iunit, '(1X, A, 1X, F15.10)') 'E_CCSD_corr:            ', sys%e_ccsd
-    write(iunit, '(1X, A, 1X, F15.10)') 'E_CCSD:                 ', sys%e_ccsd + sys%e_hf + int_store%e_nuc
-    write(iunit, '(1X, A, 1X, F15.10)') 'E_(T):                  ', sys%e_ccsd_t
-    write(iunit, '(1X, A, 1X, F15.10)') 'E_CCSD(T):              ', sys%e_ccsd_t + sys%e_ccsd + sys%e_hf + int_store%e_nuc
-    write(iunit, '(1X, 40("-"))')
-    write(iunit, '(1X, A, 1X, F15.10)') 'Total electronic energy:', sys%e_hf+sys%e_ccsd+sys%e_ccsd_t
-    write(iunit, '(1X, A, 1X, F15.10)') 'Nuclear repulsion:      ', int_store%e_nuc
-    write(iunit, '(1X, A, 1X, F15.10)') 'Total energy:           ', sys%e_hf+sys%e_ccsd+sys%e_ccsd_t + int_store%e_nuc
+    write(iunit, '(1X, A, 1X, F15.10)') 'RHF energy:                    ', sys%e_hf + int_store%e_nuc
+
+    if (any(ct == [MP_2, CC_SD, CC_SD_T])) then
+    write(iunit, '(1X, A, 1X, F15.10)') 'MP2 correlation energy:        ', sys%e_mp2
+    write(iunit, '(1X, A, 1X, F15.10)') 'MP2 energy:                    ', sys%e_mp2 + sys%e_hf + int_store%e_nuc
+    if (any(ct == [CC_SD, CC_SD_T])) then
+    write(iunit, '(1X, A, 1X, F15.10)') 'CCSD correlation energy:       ', sys%e_ccsd
+    write(iunit, '(1X, A, 1X, F15.10)') 'CCSD energy:                   ', sys%e_ccsd + sys%e_hf + int_store%e_nuc
+    if (ct == CC_SD_T) then
+    write(iunit, '(1X, A, 1X, F15.10)') 'CCSD[T] correlation energy:    ', sys%e_ccsd_t
+    write(iunit, '(1X, A, 1X, F15.10)') 'CCSD[T] energy:                ', sys%e_ccsd_t + sys%e_hf + int_store%e_nuc
+    if (sys%ccsd_t_paren) then
+    write(iunit, '(1X, A, 1X, F15.10)') 'CCSD(T) correlation energy:    ', sys%e_ccsd_tt
+    write(iunit, '(1X, A, 1X, F15.10)') 'CCSD(T) energy:                ', sys%e_ccsd_tt + sys%e_hf + int_store%e_nuc
+    end if
+    if (sys%ccsd_t_renorm .or. sys%ccsd_t_comp_renorm) then
+    write(iunit, '(1X, A, 1X, F15.10)') 'R-CCSD[T] correlation energy:  ', sys%e_rccsd_t
+    write(iunit, '(1X, A, 1X, F15.10)') 'R-CCSD[T] energy:              ', sys%e_rccsd_t + sys%e_hf + int_store%e_nuc
+    if (sys%ccsd_t_paren) then
+    write(iunit, '(1X, A, 1X, F15.10)') 'R-CCSD(T) correlation energy:  ', sys%e_rccsd_tt
+    write(iunit, '(1X, A, 1X, F15.10)') 'R-CCSD(T) energy:              ', sys%e_rccsd_tt + sys%e_hf + int_store%e_nuc
+    end if
+    if (sys%ccsd_t_comp_renorm) then
+    write(iunit, '(1X, A, 1X, F15.10)') 'CR-CCSD[T] correlation energy: ', sys%e_crccsd_t
+    write(iunit, '(1X, A, 1X, F15.10)') 'CR-CCSD[T] energy:             ', sys%e_crccsd_t + sys%e_hf + int_store%e_nuc
+    if (sys%ccsd_t_paren) then
+    write(iunit, '(1X, A, 1X, F15.10)') 'CR-CCSD(T) correlation energy: ', sys%e_crccsd_tt
+    write(iunit, '(1X, A, 1X, F15.10)') 'CR-CCSD(T) energy:             ', sys%e_crccsd_tt + sys%e_hf + int_store%e_nuc
+    end if
+    end if
+    end if
+    end if
+    end if
+    end if
+    write(iunit, '(1X, 47("-"))')
+    if (any(ct == [CC_SD, CC_SD_T]) .and. sys%restricted) then
+    write(iunit, '(1X, A, 1X, F15.10)') 'T1 diagnostic:                 ', sys%t1_diagnostic
+    end if
+    if (sys%ccsd_t_renorm .or. sys%ccsd_t_comp_renorm) then
+    write(iunit, '(1X, A, 1X, F15.10)') 'D[T]:                          ', sys%D_T
+    if (sys%ccsd_t_paren) then
+    write(iunit, '(1X, A, 1X, F15.10)') 'D(T):                          ', sys%D_TT
+    end if
+    end if
+    write(iunit, '(1X, 47("-"))')
+    write(iunit, '(1X, A, 1X, F15.10)') 'Total electronic energy:       ', sys%e_hf+sys%e_highest
+    write(iunit, '(1X, A, 1X, F15.10)') 'Nuclear repulsion:             ', int_store%e_nuc
+    write(iunit, '(1X, A, 1X, F15.10)') 'Total energy:                  ', sys%e_hf+ sys%e_highest + int_store%e_nuc
+    
+    end associate
 
     call date_and_time(VALUES=date_values)
     write(iunit, '(1X, 64("="))')

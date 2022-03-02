@@ -22,6 +22,17 @@ module system
       real(p) :: e_mp2 = 0.0_p
       real(p) :: e_ccsd = 0.0_p
       real(p) :: e_ccsd_t = 0.0_p
+      real(p) :: e_ccsd_tt = 0.0_p
+      real(p) :: e_rccsd_t = 0.0_p
+      real(p) :: e_rccsd_tt = 0.0_p
+      real(p) :: e_crccsd_t = 0.0_p
+      real(p) :: e_crccsd_tt = 0.0_p
+      real(p) :: e_highest = 0.0_p
+
+      ! CC diagnositcs
+      real(p) :: t1_diagnostic = 0.0_p
+      real(p) :: D_T = 0.0_p
+      real(p) :: D_TT = 0.0_p
 
       ! Coefficient matrix of the canonical HF orbitals in the original, nonorthogonal AO basis
       real(p), allocatable :: canon_coeff(:,:)
