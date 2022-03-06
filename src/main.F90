@@ -9,7 +9,7 @@ program main
     use hf, only: do_rhf, do_uhf
     use geometry, only: read_geometry_in
     use mp2, only: do_mp2_spinorb, do_mp2_spatial
-    use ccsd, only: do_ccsd_spinorb, do_ccsd_spatial, do_ccsd_t_spinorb, do_ccsd_t_spatial
+    use ccsd, only: do_ccsd_spinorb, do_ccsd_spatial, do_ccsd_t_spinorb, do_ccsd_t_spinorb_acc, do_ccsd_t_spatial
 
     implicit none
 
@@ -69,7 +69,13 @@ program main
                 t0=t1
 
                 if (ct == CC_SD_T) then
+#IFDEF OPENACC
+                    call do_ccsd_t_spinorb_acc(sys, int_store, int_store_cc, sys%nocc, sys%nvirt, &
+                        sys%canon_levels_spinorb, int_store_cc%t1, int_store_cc%t2, int_store_cc%vvoo, int_store_cc%vovv, &
+                        int_store_cc%ovoo)
+#ELSE
                     call do_ccsd_t_spinorb(sys, int_store, int_store_cc)
+#ENDIF
                     call system_clock(t1)
                     if (t1<t0) t1 = t1+count_max
                     write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for unrestricted CCSD(T):', real(t1-t0)/count_rate, "s"
@@ -122,7 +128,7 @@ program main
     if (any(ct == [CC_SD, CC_SD_T])) then
     write(iunit, '(1X, A, 1X, F15.10)') 'CCSD correlation energy:       ', sys%e_ccsd
     write(iunit, '(1X, A, 1X, F15.10)') 'CCSD energy:                   ', sys%e_ccsd + sys%e_hf + int_store%e_nuc
-    if (ct == CC_SD_T) then
+    if (ct == CC_SD_T .and. sys%restricted) then
     write(iunit, '(1X, A, 1X, F15.10)') 'CCSD[T] correlation energy:    ', sys%e_ccsd_t
     write(iunit, '(1X, A, 1X, F15.10)') 'CCSD[T] energy:                ', sys%e_ccsd_t + sys%e_hf + int_store%e_nuc
     if (sys%ccsd_t_paren) then
@@ -145,11 +151,14 @@ program main
     end if
     end if
     end if
+    else
+    write(iunit, '(1X, A, 1X, F15.10)') 'CCSD(T) correlation energy:    ', sys%e_ccsd_t
+    write(iunit, '(1X, A, 1X, F15.10)') 'CCSD(T) energy:                ', sys%e_ccsd_t + sys%e_hf + int_store%e_nuc
     end if
     end if
     end if
-    write(iunit, '(1X, 47("-"))')
     if (any(ct == [CC_SD, CC_SD_T]) .and. sys%restricted) then
+    write(iunit, '(1X, 47("-"))')
     write(iunit, '(1X, A, 1X, F15.10)') 'T1 diagnostic:                 ', sys%t1_diagnostic
     end if
     if (sys%ccsd_t_renorm .or. sys%ccsd_t_comp_renorm) then

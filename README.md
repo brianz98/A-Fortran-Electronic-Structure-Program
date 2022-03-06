@@ -24,13 +24,9 @@ The end goal of this project will be performing HF, MP2, CCSD, and CCSD(T), as p
 - [X] Renormalised CCSD(T)
 - [X] Completely renormalised CCSD[T]
 - [X] Completely renormalised CCSD(T)
-- [ ] Loop optimisations - using permutational symmetry
+- [X] GPU acceleration for CCSD(T)
 - [ ] Adapting Hartree-Fock with symmetry
-- [ ] Ditto for MP2
-- [ ] Ditto for CCSD
-- [ ] Ditto for CCSD(T)
 - [ ] MPI parallelisation
-- [ ] GPU adaptation for MP2 and CCSD/(T)
 
 ## Installation guide
 To get started, clone this directory by

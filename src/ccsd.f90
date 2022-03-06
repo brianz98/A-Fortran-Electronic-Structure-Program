@@ -208,6 +208,7 @@ module ccsd
          write(iunit, '(1X, A)') 'Initialise CC intermediate tensors and DIIS auxilliary arrays...'
          call init_cc(sys, cc_amp, cc_int, int_store, restricted=.false.)
          allocate(st%t2_old, source=cc_amp%t_ijab)
+         st%t2_old = 0.0_p
          call init_diis_cc_t(sys, diis)
 
          call system_clock(t1)
@@ -217,6 +218,13 @@ module ccsd
          t0=t1
 
          write(iunit, '(1X, A)') 'Initialisation done, now entering iterative CC solver...'
+         call update_cc_energy(sys, st, cc_int, cc_amp, conv, restricted=.false.)
+         write(iunit, '(75("-"))')
+         write(iunit, '(1X, A, 3X, A, 3X, A, 3X, A, 3X, A)') &
+            'Iteration','     Energy    ','    deltaE     ','  delta RMS T2 ', '  Time  '
+         write(iunit, '(75("-"))')
+         write(iunit, '(1X, A9, 3X, F15.12, 3X, F15.12, 3X, F15.12)')&
+            'MP1', st%energy, (st%energy-st%energy_old), st%rms
 
          ! ###################
          ! Iterative CC solver
@@ -238,7 +246,8 @@ module ccsd
             call update_amplitudes(sys, cc_amp, int_store, cc_int)
             call update_cc_energy(sys, st, cc_int, cc_amp, conv, restricted=.false.)
             call system_clock(t1)
-            write(iunit, '(1X, A, 1X, I2, 2X, F15.12, 2X, F8.6, 1X, A)') 'Iteration',iter,st%energy,real(t1-t0, kind=dp)/c_rate,'s'
+            write(iunit, '(1X, I9, 3X, F15.12, 3X, F15.12, 3X, F15.12, 3X, F8.6)') &
+               iter, st%energy, (st%energy-st%energy_old), st%rms, (real(t1-t0, kind=dp)/c_rate)
             t0=t1
             if (conv) then
                write(iunit, '(1X, A)') 'Convergence reached within tolerance.'
@@ -1910,6 +1919,99 @@ module ccsd
          end associate
 
       end subroutine do_ccsd_t_spinorb
+
+      subroutine do_ccsd_t_spinorb_acc(sys, int_store, int_store_cc, nocc, nvirt, e, t1, t2, vvoo, vovv, ovoo)
+         ! Spinorbital formuation of CCSD(T)
+         ! In:
+         !     int_store: integral information.
+         ! In/out:
+         !     sys: holds converged amplitudes from CCSD
+
+         use integrals, only: int_store_t, int_store_cc_t
+         use error_handling, only: check_allocate
+
+         type(system_t), intent(inout) :: sys
+         integer, intent(in) :: nocc, nvirt
+         type(int_store_t), intent(in) :: int_store
+         type(int_store_cc_t), intent(in) :: int_store_cc
+         real(p), intent(in), dimension(:,:,:,:) :: e(:), t1(:,:), t2, vvoo, vovv, ovoo
+
+         integer :: i, j, k, a, b, c, m, f, ierr
+         real(p), allocatable :: t2_reshape(:,:,:,:)
+         real(p) :: e_T, tmp_t3d, tmp_t3c, tmp_t3c_d
+
+         write(iunit, '(1X, 10("-"))')
+         write(iunit, '(1X, A)') 'CCSD(T)'
+         write(iunit, '(1X, 10("-"))')
+
+
+         ! For efficient cache access during tmp_t3c updates
+         allocate(t2_reshape(nvirt,nvirt,nocc,nocc), source=0.0_p, stat=ierr)
+         call check_allocate('t2_reshape', (nvirt*nocc)**2, ierr)
+         ! ijab -> baij
+         t2_reshape = reshape(t2, shape(t2_reshape), order=(/4,3,2,1/))
+
+         ! We use avoid the storage of full triples (six-dimensional array..) and instead use the strategy of 
+         ! batched triples storage, denoted W^{ijk}(abc) in (https://doi.org/10.1016/0009-2614(91)87003-T).
+         ! We could of course only compute one element in a loop iteration but that will probably result in bad floating point
+         ! performance, here for each thread/loop iteration we use the Fortran intrinsic sum, 
+         ! instead of all relying on OMP reduction, to hopefully give better floating point performance.
+
+         ! P(i/jk)P(a/bc) = (1-jik-kji)(1-bac-cba)
+
+         e_T = 0.0_p
+         !$acc data copyin(t1,vvoo,e,t2_reshape,vovv,t2,ovoo)
+         !$acc loop gang private(tmp_t3c,tmp_t3c_d,tmp_t3d) collapse(6) reduction(+:e_T)
+         do i = 1, nocc
+            do j = 1, nocc
+               do k = 1, nocc
+                  ! Compute T3 amplitudes
+                  do a = 1, nvirt
+                     do c = 1, nvirt
+                        do b = 1, nvirt
+                           ! Disonnected T3: D_{ijk}^{abc}*t_{ijk}^{abc}(d) = P(i/jk)P(a/bc)t_i^a*<jk||bc>
+                           ! Can be rewritten directly as no sums in the expression
+                           tmp_t3d = ((t1(i,a)*vvoo(b,c,j,k) - t1(j,a)*vvoo(b,c,i,k) - t1(k,a)*vvoo(b,c,j,i)) - &
+                                      (t1(i,b)*vvoo(a,c,j,k) - t1(j,b)*vvoo(a,c,i,k) - t1(k,b)*vvoo(a,c,j,i)) - &
+                                      (t1(i,c)*vvoo(b,a,j,k) - t1(j,c)*vvoo(b,a,i,k) - t1(k,c)*vvoo(b,a,j,i)) ) &
+                                             /(e(i)+e(j)+e(k)-e(a+nocc)-e(b+nocc)-e(c+nocc))
+
+                           ! Connected T3: D_{ijk}^{abc}*t_{ijk}^{abc}(c) = 
+                           !        P(i/jk)P(a/bc)[\sum_f t_jk^af <fi||bc> - \sum_m t_im^bc <ma||jk>]
+                           tmp_t3c = 0.0_p
+                           !$acc loop vector
+                           do f = 1, nvirt
+                              tmp_t3c =  tmp_t3c + &
+                                          (vovv(f,i,b,c)*t2_reshape(f,a,k,j) - &
+                                           vovv(f,j,b,c)*t2_reshape(f,a,k,i) - vovv(f,k,b,c)*t2_reshape(f,a,i,j)) - &
+                                          (vovv(f,i,a,c)*t2_reshape(f,b,k,j) - &
+                                           vovv(f,j,a,c)*t2_reshape(f,b,k,i) - vovv(f,k,a,c)*t2_reshape(f,b,i,j)) - &
+                                          (vovv(f,i,b,a)*t2_reshape(f,c,k,j) - &
+                                           vovv(f,j,b,a)*t2_reshape(f,c,k,i) - vovv(f,k,b,a)*t2_reshape(f,c,i,j))
+                           end do
+                           !$acc loop vector
+                           do m = 1, nocc
+                              tmp_t3c =  tmp_t3c - &
+                                          (t2(m,i,c,b)*ovoo(m,a,j,k) - t2(m,j,c,b)*ovoo(m,a,i,k) - t2(m,k,c,b)*ovoo(m,a,j,i)) + &
+                                          (t2(m,i,c,a)*ovoo(m,b,j,k) - t2(m,j,c,a)*ovoo(m,b,i,k) - t2(m,k,c,a)*ovoo(m,b,j,i)) + &
+                                          (t2(m,i,a,b)*ovoo(m,c,j,k) - t2(m,j,a,b)*ovoo(m,c,i,k) - t2(m,k,a,b)*ovoo(m,c,j,i))
+                           end do
+                           
+                           tmp_t3c_d = tmp_t3c/(e(i)+e(j)+e(k)-e(a+nocc)-e(b+nocc)-e(c+nocc))
+
+                           e_T = e_T + tmp_t3c*(tmp_t3c_d+tmp_t3d)/36
+                        end do
+                     end do
+                  end do
+               end do
+            end do
+         end do
+         !$acc end data
+         sys%e_ccsd_t = e_T + sys%e_ccsd
+         sys%e_highest = sys%e_ccsd_t
+         write(iunit, '(1X, A, 1X, F15.9)') 'Unrestricted CCSD(T) correlation energy (Hartree):', e_T
+
+      end subroutine do_ccsd_t_spinorb_acc
 
       subroutine do_ccsd_t_spatial(sys, int_store, calcname, int_store_cc)
 
