@@ -70,10 +70,9 @@ def generate_dat_psi(dirname, mol, wfn):
     sp.call(f'cp els.in {dirname}',shell=True)
 
 def generate_water(bl, ang):
-    mol = psi4.geometry(f"""
-        O 
-        H 1 {bl}
-        H 1 {bl} 2 {ang}
+    mol = psi4.geometry(f""" 
+        F
+        F 1 {bl} 
         units = angstrom
         """)
     wfn = psi4.core.Wavefunction(mol, psi4.core.BasisSet.build(mol))
@@ -85,28 +84,44 @@ def run_psi4(bl, ang):
 
 def run_els(els_dir, directory):
     result = sp.check_output(els_dir,cwd=directory).decode('utf-8').split('\n')
-    energy = np.zeros(4)
+    energy = np.zeros(12)
     with open(f'{directory}/els.out', 'w') as f:
         for idx, line in enumerate(result):
             f.write(line+'\n')
-            if 'E_HF' in line:
+            if 'RHF energy:' in line:
                 energy[0] = float(line.split(' ')[-1])
-            if 'E_MP2' in line:
+            if 'MP2 energy:' in line:
                 energy[1] = float(line.split(' ')[-1])
-            if 'E_CCSD' in line:
+            if ' CCSD energy:' in line:
                 energy[2] = float(line.split(' ')[-1])
-            if 'E_CCSD(T)' in line:
+            if ' CCSD[T] energy:' in line:
                 energy[3] = float(line.split(' ')[-1])
+            if ' CCSD(T) energy:' in line:
+                energy[4] = float(line.split(' ')[-1])
+            if ' R-CCSD[T] energy:' in line:
+                energy[5] = float(line.split(' ')[-1])
+            if ' R-CCSD(T) energy:' in line:
+                energy[6] = float(line.split(' ')[-1])
+            if ' CR-CCSD[T] energy:' in line:
+                energy[7] = float(line.split(' ')[-1])
+            if ' CR-CCSD(T) energy:' in line:
+                energy[8] = float(line.split(' ')[-1])
+            if ' T1 diagnostic:' in line:
+                energy[9] = float(line.split(' ')[-1])
+            if ' D[T]:' in line:
+                energy[10] = float(line.split(' ')[-1])
+            if ' D(T):' in line:
+                energy[11] = float(line.split(' ')[-1])
     return energy
 
 def main(molname, memory, basis, bl_upper, bl_lower, bl_step, ang, els_dir):
-    Path(molname).mkdir()
+    Path(molname).mkdir(exist_ok=True)
     psi4.set_output_file(f'{molname}/{molname}.psi4out', append=False)
     psi4.set_memory(f'{memory} MB')
     psi4.set_options({'basis':basis})
-    num_points = int((bl_upper-bl_lower)/bl_step + 1)
+    num_points = round((bl_upper-bl_lower)/bl_step + 1)
     binding_data_psi4 = np.zeros((num_points,6))
-    binding_data_els = np.zeros((num_points,6))
+    binding_data_els = np.zeros((num_points,14))
     i = 0
     for bl in np.linspace(bl_lower,bl_upper,num_points):
         dirname = f'{molname}/{bl:.2f}_{ang:.2f}'
@@ -129,32 +144,41 @@ def main(molname, memory, basis, bl_upper, bl_lower, bl_step, ang, els_dir):
             f.write(f'HF: {e_list_els[0]}\n')
             f.write(f'MP2: {e_list_els[1]}\n')
             f.write(f'CCSD: {e_list_els[2]}\n')
-            f.write(f'CCSD(T): {e_list_els[3]}\n')
+            f.write(f'CCSD[T]: {e_list_els[3]}\n')
+            f.write(f'CCSD(T): {e_list_els[4]}\n')
+            f.write(f'R-CCSD[T]: {e_list_els[5]}\n')
+            f.write(f'R-CCSD(T): {e_list_els[6]}\n')
+            f.write(f'CR-CCSD[T]: {e_list_els[7]}\n')
+            f.write(f'CR-CCSD(T): {e_list_els[8]}\n')
+            f.write(f'T1 diagnostic: {e_list_els[9]}\n')
+            f.write(f'D[T]: {e_list_els[10]}\n')
+            f.write(f'D(T): {e_list_els[11]}\n')
         i += 1
 
     np.savetxt(f'{molname}/binding_data_psi4.dat',binding_data_psi4,['%5.3f','%6.3f','%17.15f','%17.15f','%17.15f','%17.15f'])
-    np.savetxt(f'{molname}/binding_data_els.dat',binding_data_els,['%5.3f','%6.3f','%17.15f','%17.15f','%17.15f','%17.15f'])
+    fmt_arr = ['%5.3f','%6.3f'] + ['%17.15f']*12
+    np.savetxt(f'{molname}/binding_data_els.dat',binding_data_els,fmt_arr)
 
 if __name__ == '__main__':
     # Directory of els.x
     els_dir = '/mnt/c/Users/zdj51/Documents/code/electronic-structure/els.x'
 
     # Name of molecule
-    molname = 'water'
+    molname = 'f2'
     
     # MBs
     memory = 2000
     
     # Basis set to be used
-    basis = 'def2-svp'
+    basis = 'cc-pvdz'
     molname = f'{molname}-{basis}'
     
     # Angstrom
-    bl_upper = 2.0
     bl_lower = 1.0
-    bl_step = 0.2
+    bl_upper = 3.0
+    bl_step = 0.05
     
     # Degrees
-    ang = 104.45
+    ang = 0
     
     main(molname, memory, basis, bl_upper, bl_lower, bl_step, ang, els_dir)

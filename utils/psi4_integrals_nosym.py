@@ -71,6 +71,8 @@ def generate_water(bl, ang):
         O 
         H 1 {bl}
         H 1 {bl} 2 {ang}
+        noreorient
+        symmetry c1
         units = angstrom
         """)
     wfn = psi4.core.Wavefunction(mol, psi4.core.BasisSet.build(mol))
