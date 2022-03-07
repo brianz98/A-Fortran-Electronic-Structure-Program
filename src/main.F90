@@ -69,13 +69,13 @@ program main
                 t0=t1
 
                 if (ct == CC_SD_T) then
-#IFDEF OPENACC
+#ifdef OPENACC
                     call do_ccsd_t_spinorb_acc(sys, int_store, int_store_cc, sys%nocc, sys%nvirt, &
                         sys%canon_levels_spinorb, int_store_cc%t1, int_store_cc%t2, int_store_cc%vvoo, int_store_cc%vovv, &
                         int_store_cc%ovoo)
-#ELSE
+#else
                     call do_ccsd_t_spinorb(sys, int_store, int_store_cc)
-#ENDIF
+#endif
                     call system_clock(t1)
                     if (t1<t0) t1 = t1+count_max
                     write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for unrestricted CCSD(T):', real(t1-t0)/count_rate, "s"

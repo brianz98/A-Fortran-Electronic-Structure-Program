@@ -208,7 +208,7 @@ module ccsd
          write(iunit, '(1X, A)') 'Initialise CC intermediate tensors and DIIS auxilliary arrays...'
          call init_cc(sys, cc_amp, cc_int, int_store, restricted=.false.)
          allocate(st%t2_old, source=cc_amp%t_ijab)
-         st%t2_old = 0.0_p
+         st%t2_old = 0.0_dp
          call init_diis_cc_t(sys, diis)
 
          call system_clock(t1)
@@ -250,6 +250,7 @@ module ccsd
                iter, st%energy, (st%energy-st%energy_old), st%rms, (real(t1-t0, kind=dp)/c_rate)
             t0=t1
             if (conv) then
+               write(iunit, '(75("-"))')
                write(iunit, '(1X, A)') 'Convergence reached within tolerance.'
                write(iunit, '(1X, A, 1X, F15.12)') 'Final CCSD Energy (Hartree):', st%energy
 
@@ -1913,9 +1914,9 @@ module ccsd
          end do
          !$omp end do
          !$omp end parallel
-         sys%e_ccsd_t = e_T
-         sys%e_highest = e_T
-         write(iunit, '(1X, A, 1X, F15.9)') 'Unrestricted CCSD(T) correlation energy (Hartree):', e_T
+         sys%e_ccsd_t = e_T + sys%e_ccsd
+         sys%e_highest = sys%e_ccsd_t
+         write(iunit, '(1X, A, 1X, F15.9)') 'Unrestricted CCSD(T) correlation energy (Hartree):', sys%e_ccsd_t
          end associate
 
       end subroutine do_ccsd_t_spinorb
@@ -1961,11 +1962,12 @@ module ccsd
 
          e_T = 0.0_p
          !$acc data copyin(t1,vvoo,e,t2_reshape,vovv,t2,ovoo)
-         !$acc loop gang private(tmp_t3c,tmp_t3c_d,tmp_t3d) collapse(6) reduction(+:e_T)
+         !$acc parallel loop gang collapse(3) private(tmp_t3c,tmp_t3c_d,tmp_t3d) reduction(+:e_T)
          do i = 1, nocc
             do j = 1, nocc
                do k = 1, nocc
                   ! Compute T3 amplitudes
+                  !$acc loop worker collapse(3)
                   do a = 1, nvirt
                      do c = 1, nvirt
                         do b = 1, nvirt
@@ -1979,7 +1981,7 @@ module ccsd
                            ! Connected T3: D_{ijk}^{abc}*t_{ijk}^{abc}(c) = 
                            !        P(i/jk)P(a/bc)[\sum_f t_jk^af <fi||bc> - \sum_m t_im^bc <ma||jk>]
                            tmp_t3c = 0.0_p
-                           !$acc loop vector
+                           !$acc loop vector reduction(+:tmp_t3c)
                            do f = 1, nvirt
                               tmp_t3c =  tmp_t3c + &
                                           (vovv(f,i,b,c)*t2_reshape(f,a,k,j) - &
@@ -1989,7 +1991,7 @@ module ccsd
                                           (vovv(f,i,b,a)*t2_reshape(f,c,k,j) - &
                                            vovv(f,j,b,a)*t2_reshape(f,c,k,i) - vovv(f,k,b,a)*t2_reshape(f,c,i,j))
                            end do
-                           !$acc loop vector
+                           !$acc loop vector reduction(+:tmp_t3c)
                            do m = 1, nocc
                               tmp_t3c =  tmp_t3c - &
                                           (t2(m,i,c,b)*ovoo(m,a,j,k) - t2(m,j,c,b)*ovoo(m,a,i,k) - t2(m,k,c,b)*ovoo(m,a,j,i)) + &
@@ -2009,7 +2011,7 @@ module ccsd
          !$acc end data
          sys%e_ccsd_t = e_T + sys%e_ccsd
          sys%e_highest = sys%e_ccsd_t
-         write(iunit, '(1X, A, 1X, F15.9)') 'Unrestricted CCSD(T) correlation energy (Hartree):', e_T
+         write(iunit, '(1X, A, 1X, F15.9)') 'Unrestricted CCSD(T) correlation energy (Hartree):', sys%e_ccsd_t
 
       end subroutine do_ccsd_t_spinorb_acc
 
