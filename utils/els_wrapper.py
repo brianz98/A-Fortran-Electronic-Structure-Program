@@ -67,12 +67,10 @@ def generate_dat_psi(dirname, mol, wfn):
     np.savetxt(f'{dirname}/v.dat', v_dat, ['%1d','%1d','%17.15f'], delimiter='\t')
     np.savetxt(f'{dirname}/eri.dat', eri_dat, ['%1d','%1d','%1d','%1d','%17.15f'], delimiter='\t')
 
-    sp.call(f'cp els.in {dirname}',shell=True)
-
 def generate_water(bl, ang):
     mol = psi4.geometry(f""" 
-        F
-        F 1 {bl} 
+        N
+        N 1 {bl} 
         units = angstrom
         """)
     wfn = psi4.core.Wavefunction(mol, psi4.core.BasisSet.build(mol))
@@ -80,9 +78,16 @@ def generate_water(bl, ang):
 
 def run_psi4(bl, ang):
     psi4.energy('ccsd(t)')
+    psi4.core.clean()
     return [psi4.variable("SCF TOTAL ENERGY"), psi4.variable("MP2 TOTAL ENERGY"),psi4.variable("CCSD TOTAL ENERGY"),psi4.variable("CCSD(T) TOTAL ENERGY")]
 
-def run_els(els_dir, directory):
+def run_els(els_dir, directory, previous_directory, read_in):
+    if not read_in:
+        sp.call(f'cp els_noread.in {directory}/els.in',shell=True)
+    else:
+        sp.call(f'cp els.in {directory}',shell=True)
+        sp.call(f'cp {previous_directory}/guess_out.dat {directory}/guess_in.dat',shell=True)
+
     result = sp.check_output(els_dir,cwd=directory).decode('utf-8').split('\n')
     energy = np.zeros(12)
     with open(f'{directory}/els.out', 'w') as f:
@@ -114,17 +119,23 @@ def run_els(els_dir, directory):
                 energy[11] = float(line.split(' ')[-1])
     return energy
 
-def main(molname, memory, basis, bl_upper, bl_lower, bl_step, ang, els_dir):
+def main(molname, memory, basis, bl_upper, bl_lower, bl_step, ang, els_dir, read_in):
     Path(molname).mkdir(exist_ok=True)
     psi4.set_output_file(f'{molname}/{molname}.psi4out', append=False)
     psi4.set_memory(f'{memory} MB')
-    psi4.set_options({'basis':basis})
+    psi4.set_options({'basis':basis,'ccenergy__maxiter':100})
     num_points = round((bl_upper-bl_lower)/bl_step + 1)
     binding_data_psi4 = np.zeros((num_points,6))
     binding_data_els = np.zeros((num_points,14))
+    
+
     i = 0
+    # We need this for read in/out of SCF guesses
+    prev_dirname = ''
+
     for bl in np.linspace(bl_lower,bl_upper,num_points):
         dirname = f'{molname}/{bl:.2f}_{ang:.2f}'
+        
         mol, wfn = generate_water(bl, ang)
         generate_dat_psi(dirname, mol, wfn)
 
@@ -137,7 +148,14 @@ def main(molname, memory, basis, bl_upper, bl_lower, bl_step, ang, els_dir):
             f.write(f'CCSD: {e_list[2]}\n')
             f.write(f'CCSD(T): {e_list[3]}\n')
 
-        e_list_els = run_els(els_dir, dirname)
+        if i == 0: 
+            # Must set scf_read_in setting to .false. since there's no previous calculation
+            e_list_els = run_els(els_dir, dirname, prev_dirname, read_in=False)
+        else:
+            # If read_in not specified, never read in
+            e_list_els = run_els(els_dir, dirname, prev_dirname, read_in=read_in)
+
+        prev_dirname = dirname
         binding_data_els[i,:2] = [bl, ang]
         binding_data_els[i,2:] = e_list_els
         with open(f'{dirname}/els_energy.dat','w') as f:
@@ -164,7 +182,7 @@ if __name__ == '__main__':
     els_dir = '/mnt/c/Users/zdj51/Documents/code/electronic-structure/els.x'
 
     # Name of molecule
-    molname = 'f2'
+    molname = 'n2'
     
     # MBs
     memory = 2000
@@ -174,11 +192,14 @@ if __name__ == '__main__':
     molname = f'{molname}-{basis}'
     
     # Angstrom
-    bl_lower = 1.0
-    bl_upper = 3.0
-    bl_step = 0.05
+    bl_lower = 0.8
+    bl_upper = 2.3
+    bl_step = 0.02
     
     # Degrees
     ang = 0
+
+    # Read in guesses?
+    read_in = True
     
-    main(molname, memory, basis, bl_upper, bl_lower, bl_step, ang, els_dir)
+    main(molname, memory, basis, bl_upper, bl_lower, bl_step, ang, els_dir, read_in)

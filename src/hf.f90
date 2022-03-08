@@ -1,6 +1,6 @@
 module hf
    use const
-   use, intrinsic :: iso_fortran_env, only : iunit=>output_unit
+   use, intrinsic :: iso_fortran_env, only : iunit=>output_unit, iostat_end
 
    implicit none
 
@@ -29,7 +29,7 @@ module hf
 
          type(mat_t) :: ovlp, fockmat
          real(p) :: ortmat(sys%nbasis,sys%nbasis)
-         real(p) :: density(sys%nbasis,sys%nbasis)
+         real(p) :: density(sys%nbasis,sys%nbasis), scf_guess(sys%nbasis,sys%nbasis)
 
          type(state_t) :: st
          integer :: iter, i
@@ -69,9 +69,17 @@ module hf
          ! ###############################
          ! Various initialisation routines
          ! ###############################
-         ! Initial guess Fock matrix is H_core (equivalent to guessing the null matrix for density matrix)
-         ! (Szabo and Ostlund p. 148)
-         call init_mat_t(int_store%core_hamil, fockmat)
+         
+         if (sys%scf_read_guess) then
+            ! Read the AO basis fock matrix from a previous iteration
+            call read_in_scf_guess(scf_guess)
+            call init_mat_t(scf_guess, fockmat)
+         else
+            ! Initial guess AO basis Fock matrix is H_core (equivalent to guessing the null matrix for density matrix)
+            ! (Szabo and Ostlund p. 148)
+            call init_mat_t(int_store%core_hamil, fockmat)
+         end if
+
          call init_diis_t(sys, diis)
 
          ! ####################
@@ -118,6 +126,12 @@ module hf
                sys%e_highest = st%energy
                allocate(sys%canon_coeff, source=fockmat%A)
                allocate(sys%canon_levels, source=fockmat%W)
+
+               if (sys%scf_write_guess) then
+                  ! Write out AO Fock matrix for future use
+                  call write_out_scf_guess(fockmat%ao, sys)
+               end if
+
                exit
             end if
 
@@ -135,6 +149,46 @@ module hf
          deallocate(st%density_old)
 
       end subroutine do_rhf
+
+      subroutine read_in_scf_guess(scf_guess)
+         
+         real(p), intent(out) :: scf_guess(:,:)
+
+         integer :: ir, i, j, ios
+         real(p) :: entry
+
+         write(iunit, *) 'Reading previous AO Fock matrix as guess...'
+         open(newunit=ir, file='guess_in.dat', status='old', form='formatted')
+         do
+            read(ir, *, iostat=ios) i, j, entry
+            if (ios == iostat_end) exit
+            scf_guess(i,j) = entry
+         end do
+
+         close(ir)
+
+      end subroutine read_in_scf_guess
+
+      subroutine write_out_scf_guess(ao_fock,sys)
+
+         use system, only: system_t
+
+         type(system_t), intent(in) :: sys
+         real(p), intent(in) :: ao_fock(:,:)
+
+         integer :: ir, ios, i, j
+
+         write(iunit, *) 'Writing AO Fock matrix for future use...'
+         open(newunit=ir, file='guess_out.dat', status='replace', form='formatted')
+         do i = 1, sys%nbasis
+            do j = 1, sys%nbasis
+               write(ir, '(I0, 1X, I0, 1X, ES16.9)') i, j, ao_fock(i,j)
+            end do
+         end do
+
+         close(ir)
+
+      end subroutine write_out_scf_guess
 
       subroutine do_uhf
           continue

@@ -9,6 +9,6 @@ ccsd_diis_n_errmat=8,
 scf_maxiter = 150,
 ccsd_maxiter = 200,
 write_fcidump = .false.,
-scf_read_guess = .true.,
+scf_read_guess = .false.,
 scf_write_guess = .true.
 /
