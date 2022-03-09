@@ -16,10 +16,12 @@ program main
     type(int_store_t) :: int_store
     type(int_store_cc_t) :: int_store_cc
     type(system_t) :: sys
-    integer(kind=8) :: t0, t1, count_rate, count_max
+    integer(kind=8) :: t0, t1, count_rate, count_max, t_glob_start, t_glob_end
     integer :: date_values(8)
     character(80) :: calcname
     real(p) :: highest_theory_energy
+
+    call system_clock(t_glob_start, count_rate, count_max)
 
     write(iunit, '(1X, 64("="))')
     write(iunit, '(1X, A)') 'A Fortran Electronic Structure Programme (AFESP)'
@@ -29,7 +31,7 @@ program main
     write(iunit, '(1X, A, 1X, I2.2, "/", I2.2, "/", I4.4, 1X, A, 1X, I2.2, 2(":", I2.2))') &
                 "Started running on", date_values(3:1:-1), "at", date_values(5:7)
 
-    call system_clock(t0, count_rate, count_max)
+    call system_clock(t0)
 
     call read_system_in(sys)
     call read_integrals_in(sys, int_store)
@@ -174,9 +176,12 @@ program main
     
     end associate
 
+    call system_clock(t_glob_end)
+
     call date_and_time(VALUES=date_values)
     write(iunit, '(1X, 64("="))')
     write(iunit, '(1X, A, 1X, I2.2, "/", I2.2, "/", I4.4, 1X, A, 1X, I2.2, 2(":", I2.2))') &
                 "Finished running on", date_values(3:1:-1), "at", date_values(5:7)
+    write(iunit, '(1X, A, 1X, F16.8)') 'Total execution time:', real((t_glob_end-t_glob_start),kind=p)/count_rate
    
 end program main

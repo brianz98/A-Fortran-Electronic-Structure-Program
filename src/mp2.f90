@@ -111,7 +111,7 @@ module mp2
          !$omp private(kl, ij, pq, rs, pqrs, s_up, ia, ja, jb, ib) &
          !$omp shared(sys, int_store, tmp_a, tmp_b, nocc, n)
          associate(C=>sys%canon_coeff, eri_mo=>int_store%eri_mo, eri=>int_store%eri)
-         !$omp do schedule(dynamic, 2) collapse(2)
+         !$omp do schedule(static, 10) collapse(2)
 
          ! Naively (see above) we can perform the transformation of (ij|kl)->(pq|rs) in an O(N^8) loop:
          ! do ijklpqrs
@@ -153,7 +153,7 @@ module mp2
          end do
          !$omp end do
 
-         !$omp do schedule(dynamic, 2) collapse(2)
+         !$omp do schedule(static, 10) collapse(2)
          ! (pj|kl) -> (pq|kl)
          do l = 1, n
             do k = 1, n
@@ -173,7 +173,7 @@ module mp2
          tmp_a(:,:,:,:) = 0.0_dp
          !$omp end single
 
-         !$omp do schedule(dynamic, 2) collapse(2)
+         !$omp do schedule(static, 10) collapse(2)
          do l = 1, n
             do r = 1, n
                do k = 1, n
@@ -191,7 +191,7 @@ module mp2
          !$omp single
          tmp_b(:,:,:,:) = 0.0_dp
          !$omp end single
-         !$omp do schedule(dynamic, 2) collapse(2)
+         !$omp do schedule(static, 10) collapse(2)
          do s = 1, n
             do r = 1, n
                do l = 1, n
@@ -271,6 +271,7 @@ module mp2
          integer :: i, j, k, l, p, q, r, s, a, b
          integer :: kl, ij, pq, rs, pqrs, s_up
          integer :: ia, ja, jb, ib
+         real(dp) :: emp
 
          n = sys%nbasis
          tmpdim = n*(n+1)/2
@@ -290,7 +291,7 @@ module mp2
          !$omp private(kl, ij, pq, rs, pqrs, s_up, ia, ja, jb, ib) &
          !$omp shared(sys, int_store, tmp_a, tmp_b, nocc, n)
          associate(C=>sys%canon_coeff, eri_mo=>int_store%eri_mo, eri=>int_store%eri)
-         !$omp do schedule(dynamic, 2) collapse(2)
+         !$omp do schedule(static, 10) collapse(2)
 
          ! Naively (see above) we can perform the transformation of (ij|kl)->(pq|rs) in an O(N^8) loop:
          ! do ijklpqrs
@@ -332,7 +333,7 @@ module mp2
          end do
          !$omp end do
 
-         !$omp do schedule(dynamic, 2) collapse(2)
+         !$omp do schedule(static, 10) collapse(2)
          ! (pj|kl) -> (pq|kl)
          do l = 1, n
             do k = 1, n
@@ -352,7 +353,7 @@ module mp2
          tmp_a(:,:,:,:) = 0.0_dp
          !$omp end single
 
-         !$omp do schedule(dynamic, 2) collapse(2)
+         !$omp do schedule(static, 10) collapse(2)
          do l = 1, n
             do r = 1, n
                do k = 1, n
@@ -370,7 +371,7 @@ module mp2
          !$omp single
          tmp_b(:,:,:,:) = 0.0_dp
          !$omp end single
-         !$omp do schedule(dynamic, 2) collapse(2)
+         !$omp do schedule(static, 10) collapse(2)
          do s = 1, n
             do r = 1, n
                do l = 1, n
@@ -415,8 +416,10 @@ module mp2
          write(iunit, '(1X, A)') 'Calculating MP2 energy...'
 
          nocc = sys%nel/2
-         associate(e=>sys%canon_levels, eri=>int_store%eri_mo, emp=>sys%e_mp2)
+         associate(e=>sys%canon_levels, eri=>int_store%eri_mo)
          emp = 0.0_dp
+         !$omp parallel do default(none) shared(nocc,n,sys,int_store) private(ia,ja,jb,ib) &
+         !$omp schedule(static, 10) collapse(2) reduction(+:emp)
          do i = 1, nocc
             do j = 1, nocc
                do a = nocc+1, n
@@ -431,7 +434,10 @@ module mp2
                end do
             end do
          end do
+         !$omp end parallel do
          end associate
+
+         sys%e_mp2 = emp
 
          write(iunit, '(1X, A, 1X, F15.8)') 'MP2 correlation energy (Hartree):', sys%e_mp2
          sys%e_highest = sys%e_mp2
