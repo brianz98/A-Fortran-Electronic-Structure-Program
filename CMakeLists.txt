@@ -25,4 +25,4 @@ set (CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} ${dialect}")
 
 file (GLOB_RECURSE sources src/*.f90 src/*.F90)
 add_executable(els.x ${sources})
-target_link_libraries (els.x /opt/OpenBLAS/lib/libopenblas.a -lpthread)
+target_link_libraries (els.x -lopenblas)
