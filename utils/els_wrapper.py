@@ -77,8 +77,15 @@ def generate_water(bl, ang):
     wfn = psi4.core.Wavefunction(mol, psi4.core.BasisSet.build(mol))
     return mol, wfn
 
-def run_psi4(bl, ang):
-    psi4.energy('ccsd(t)')
+def run_psi4(bl, ang, read_in):
+    if not read_in:
+        e_ccsd_t, wfn = psi4.energy('ccsd(t)', return_wfn=True)
+        wfn.to_file('psi4_out')
+    else:
+        sp.call(f'mv psi4_out.npy psi4_in.npy', shell=True)
+        e_ccsd_t, wfn = psi4.energy('ccsd(t)',restart_file='psi4_in',return_wfn=True)
+        wfn.to_file('psi4_out')
+
     psi4.core.clean()
     return [psi4.variable("SCF TOTAL ENERGY"), psi4.variable("MP2 TOTAL ENERGY"),psi4.variable("CCSD TOTAL ENERGY"),psi4.variable("CCSD(T) TOTAL ENERGY")]
 
@@ -120,7 +127,7 @@ def run_els(els_dir, directory, previous_directory, read_in):
                 energy[11] = float(line.split(' ')[-1])
     return energy
 
-def main(molname, memory, basis, bl_upper, bl_lower, bl_step, ang, els_dir, read_in, num_threads, psi4_off):
+def main(molname, memory, basis, bl_upper, bl_lower, bl_step, ang, els_dir, read_in, num_threads, psi4_off, psi4_read_in):
     Path(molname).mkdir(exist_ok=True)
     psi4.set_output_file(f'{molname}/{molname}.psi4out', append=False)
     psi4.set_memory(f'{memory} MB')
@@ -143,7 +150,11 @@ def main(molname, memory, basis, bl_upper, bl_lower, bl_step, ang, els_dir, read
         generate_dat_psi(dirname, mol, wfn)
 
         try:
-            e_list = run_psi4(bl, ang)
+            if i == 0:
+                e_list = run_psi4(bl, ang, False)
+            else:
+                e_list = run_psi4(bl, ang, psi4_read_in)
+
         except:
             if psi4_off:
                 # Don't care, continue
@@ -212,7 +223,7 @@ if __name__ == '__main__':
     molname = f'{molname}-{basis}'
     
     # Angstrom
-    bl_lower = 2
+    bl_lower = 2.00
     bl_upper = 2.2
     bl_step = 0.02
     
@@ -223,6 +234,9 @@ if __name__ == '__main__':
     read_in = True
 
     # Psi4 being trash and not converging? Don't run reference calculations
-    psi4_off = True
+    psi4_off = False
+
+    # Also do read-in for Psi4?
+    psi4_read_in = True
     
-    main(molname, memory, basis, bl_upper, bl_lower, bl_step, ang, els_dir, read_in, num_threads, psi4_off)
+    main(molname, memory, basis, bl_upper, bl_lower, bl_step, ang, els_dir, read_in, num_threads, psi4_off, psi4_read_in)
