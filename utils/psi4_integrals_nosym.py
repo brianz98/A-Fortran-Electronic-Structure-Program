@@ -82,10 +82,11 @@ def run_psi4(bl, ang):
     psi4.energy('ccsd(t)')
     return [psi4.variable("SCF TOTAL ENERGY"), psi4.variable("MP2 TOTAL ENERGY"),psi4.variable("CCSD TOTAL ENERGY"),psi4.variable("CCSD(T) TOTAL ENERGY")]
 
-def main(molname, memory, basis, bl_upper, bl_lower, bl_step, ang):
+def main(molname, memory, basis, bl_upper, bl_lower, bl_step, ang, num_threads):
     Path(molname).mkdir()
     psi4.set_output_file(f'{molname}/{molname}.psi4out', append=False)
     psi4.set_memory(f'{memory} MB')
+    psi4.core.set_num_threads(num_threads)
     psi4.set_options({'basis':basis})
     num_points = int((bl_upper-bl_lower)/bl_step + 1)
     binding_data = np.zeros((num_points,6))
@@ -107,21 +108,24 @@ def main(molname, memory, basis, bl_upper, bl_lower, bl_step, ang):
 
 if __name__ == '__main__':
     # Name of molecule
-    molname = 'water'
+    molname = 'n2'
     
     # MBs
     memory = 2000
+
+    # Threading
+    num_threads = 8
     
     # Basis set to be used
-    basis = 'def2-svp'
+    basis = 'cc-pvtz'
     molname = f'{molname}-{basis}'
     
     # Angstrom
     bl_upper = 2.0
-    bl_lower = 1.0
-    bl_step = 0.2
+    bl_lower = 2.0
+    bl_step = 0.02
     
     # Degrees
     ang = 104.45
     
-    main(molname, memory, basis, bl_upper, bl_lower, bl_step, ang)
+    main(molname, memory, basis, bl_upper, bl_lower, bl_step, ang, num_threads)

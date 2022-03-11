@@ -69,8 +69,9 @@ def generate_dat_psi(dirname, mol, wfn):
 
 def generate_water(bl, ang):
     mol = psi4.geometry(f""" 
-        N
-        N 1 {bl} 
+        O
+        H 1 {bl}
+        H 1 {bl} 2 {ang}
         units = angstrom
         """)
     wfn = psi4.core.Wavefunction(mol, psi4.core.BasisSet.build(mol))
@@ -119,11 +120,12 @@ def run_els(els_dir, directory, previous_directory, read_in):
                 energy[11] = float(line.split(' ')[-1])
     return energy
 
-def main(molname, memory, basis, bl_upper, bl_lower, bl_step, ang, els_dir, read_in):
+def main(molname, memory, basis, bl_upper, bl_lower, bl_step, ang, els_dir, read_in, num_threads, psi4_off):
     Path(molname).mkdir(exist_ok=True)
     psi4.set_output_file(f'{molname}/{molname}.psi4out', append=False)
     psi4.set_memory(f'{memory} MB')
-    psi4.set_options({'basis':basis,'ccenergy__maxiter':100})
+    psi4.core.set_num_threads(num_threads)
+    psi4.set_options({'basis':basis,'ccenergy__maxiter':200,'scf__maxiter':200})
     num_points = round((bl_upper-bl_lower)/bl_step + 1)
     binding_data_psi4 = np.zeros((num_points,6))
     binding_data_els = np.zeros((num_points,14))
@@ -135,11 +137,22 @@ def main(molname, memory, basis, bl_upper, bl_lower, bl_step, ang, els_dir, read
 
     for bl in np.linspace(bl_lower,bl_upper,num_points):
         dirname = f'{molname}/{bl:.2f}_{ang:.2f}'
+        print(f'Doing calculations in {dirname}')
         
         mol, wfn = generate_water(bl, ang)
         generate_dat_psi(dirname, mol, wfn)
 
-        e_list = run_psi4(bl, ang)
+        try:
+            e_list = run_psi4(bl, ang)
+        except:
+            if psi4_off:
+                # Don't care, continue
+                print('Psi4 failure, we\'ll stop running reference calculations')
+                continue
+            else:
+                print('Psi4 failure, stopping')
+                break
+
         binding_data_psi4[i,:2] = [bl, ang]
         binding_data_psi4[i,2:] = e_list
         with open(f'{dirname}/reference.dat','w') as f:
@@ -148,12 +161,16 @@ def main(molname, memory, basis, bl_upper, bl_lower, bl_step, ang, els_dir, read
             f.write(f'CCSD: {e_list[2]}\n')
             f.write(f'CCSD(T): {e_list[3]}\n')
 
-        if i == 0: 
-            # Must set scf_read_in setting to .false. since there's no previous calculation
-            e_list_els = run_els(els_dir, dirname, prev_dirname, read_in=False)
-        else:
-            # If read_in not specified, never read in
-            e_list_els = run_els(els_dir, dirname, prev_dirname, read_in=read_in)
+        try:
+            if i == 0: 
+                # Must set scf_read_in setting to .false. since there's no previous calculation
+                e_list_els = run_els(els_dir, dirname, prev_dirname, read_in=False)
+            else:
+                # If read_in not specified, never read in
+                e_list_els = run_els(els_dir, dirname, prev_dirname, read_in=read_in)
+        except:
+            print('els failure')
+            break
 
         prev_dirname = dirname
         binding_data_els[i,:2] = [bl, ang]
@@ -182,24 +199,30 @@ if __name__ == '__main__':
     els_dir = '/mnt/c/Users/zdj51/Documents/code/electronic-structure/els.x'
 
     # Name of molecule
-    molname = 'n2'
+    molname = 'h2o'
     
     # MBs
     memory = 2000
+
+    # Parallelisation in Psi4
+    num_threads = 8
     
     # Basis set to be used
     basis = 'cc-pvdz'
     molname = f'{molname}-{basis}'
     
     # Angstrom
-    bl_lower = 0.8
-    bl_upper = 2.3
+    bl_lower = 2
+    bl_upper = 2.2
     bl_step = 0.02
     
     # Degrees
-    ang = 0
+    ang = 104.45
 
     # Read in guesses?
     read_in = True
+
+    # Psi4 being trash and not converging? Don't run reference calculations
+    psi4_off = True
     
-    main(molname, memory, basis, bl_upper, bl_lower, bl_step, ang, els_dir, read_in)
+    main(molname, memory, basis, bl_upper, bl_lower, bl_step, ang, els_dir, read_in, num_threads, psi4_off)

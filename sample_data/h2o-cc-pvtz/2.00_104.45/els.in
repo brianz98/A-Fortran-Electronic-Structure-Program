@@ -1,0 +1,14 @@
+&elsinput
+calc_type="CCSD(T)_spinorb",
+scf_e_tol=1e-6,
+scf_d_tol=1e-7,
+scf_diis_n_errmat=6,
+ccsd_e_tol=1e-6,
+ccsd_t_tol=1e-7,
+ccsd_diis_n_errmat=8,
+scf_maxiter = 150,
+ccsd_maxiter = 200,
+write_fcidump = .false.,
+scf_read_guess = .false.,
+scf_write_guess = .false.
+/

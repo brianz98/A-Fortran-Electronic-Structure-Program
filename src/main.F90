@@ -40,7 +40,7 @@ program main
 
     call system_clock(t1)
     if (t1<t0) t1 = t1+count_max ! Moving time blocks, see system_clock documentation
-    write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for system initialisation:', real(t1-t0)/count_rate, "s"
+    write(iunit, '(1X, A, 1X, F16.8, A)') 'Time taken for system initialisation:', real(t1-t0)/count_rate, "s"
     t0=t1
 
     
@@ -52,7 +52,7 @@ program main
         call do_rhf(sys, int_store)
         call system_clock(t1)
         if (t1<t0) t1 = t1+count_max
-        write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for restricted Hartree-Fock:', real(t1-t0)/count_rate, "s"
+        write(iunit, '(1X, A, 1X, F16.8, A)') 'Time taken for restricted Hartree-Fock:', real(t1-t0)/count_rate, "s"
         t0=t1
 
         if (any(ct == [MP_2, CC_SD, CC_SD_T])) then
@@ -60,14 +60,14 @@ program main
             call do_mp2_spatial(sys, int_store)
             call system_clock(t1)
             if (t1<t0) t1 = t1+count_max
-            write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for restricted MP2:', real(t1-t0)/count_rate, "s"
+            write(iunit, '(1X, A, 1X, F16.8, A)') 'Time taken for restricted MP2:', real(t1-t0)/count_rate, "s"
             t0=t1
             
             if (any(ct == [CC_SD, CC_SD_T])) then
                 call do_ccsd_spinorb(sys, int_store, int_store_cc)
                 call system_clock(t1)
                 if (t1<t0) t1 = t1+count_max
-                write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for unrestricted CCSD:', real(t1-t0)/count_rate, "s"
+                write(iunit, '(1X, A, 1X, F16.8, A)') 'Time taken for unrestricted CCSD:', real(t1-t0)/count_rate, "s"
                 t0=t1
 
                 if (ct == CC_SD_T) then
@@ -80,7 +80,7 @@ program main
 #endif
                     call system_clock(t1)
                     if (t1<t0) t1 = t1+count_max
-                    write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for unrestricted CCSD(T):', real(t1-t0)/count_rate, "s"
+                    write(iunit, '(1X, A, 1X, F16.8, A)') 'Time taken for unrestricted CCSD(T):', real(t1-t0)/count_rate, "s"
                     t0=t1
                 end if
             end if
@@ -91,28 +91,28 @@ program main
         call do_rhf(sys, int_store)
         call system_clock(t1)
         if (t1<t0) t1 = t1+count_max
-        write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for restricted Hartree-Fock:', real(t1-t0)/count_rate, "s"
+        write(iunit, '(1X, A, 1X, F16.8, A)') 'Time taken for restricted Hartree-Fock:', real(t1-t0)/count_rate, "s"
         t0=t1
 
         if (any(ct == [MP_2, CC_SD, CC_SD_T])) then 
             call do_mp2_spatial(sys, int_store)
             call system_clock(t1)
             if (t1<t0) t1 = t1+count_max
-            write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for restricted MP2:', real(t1-t0)/count_rate, "s"
+            write(iunit, '(1X, A, 1X, F16.8, A)') 'Time taken for restricted MP2:', real(t1-t0)/count_rate, "s"
             t0=t1
             
             if (any(ct == [CC_SD, CC_SD_T])) then
                 call do_ccsd_spatial(sys, int_store, int_store_cc)
                 call system_clock(t1)
                 if (t1<t0) t1 = t1+count_max
-                write(iunit, '(1X, A, 1X, F7.4, A)') 'Time taken for restricted CCSD:', real(t1-t0)/count_rate, "s"
+                write(iunit, '(1X, A, 1X, F16.8, A)') 'Time taken for restricted CCSD:', real(t1-t0)/count_rate, "s"
                 t0=t1
 
                 if (ct == CC_SD_T) then
                     call do_ccsd_t_spatial(sys, int_store, calcname, int_store_cc)
                     call system_clock(t1)
                     if (t1<t0) t1 = t1+count_max
-                    write(iunit,'(1X, A, 1X, F7.4, A)')'Time taken for restricted '//trim(calcname)//':',real(t1-t0)/count_rate,"s"
+                    write(iunit,'(1X, A, 1X, F16.8, A)')'Time taken for restricted '//trim(calcname)//':',real(t1-t0)/count_rate,"s"
                     t0=t1
                 end if
             end if
