@@ -57,7 +57,14 @@ where the `PREFIX` can be omitted and OpenBLAS will be installed in `/opt/OpenBL
 
 If the linker can't find the OpenBLAS library, then you need to change the last line of `CMakeLists.txt` from `-lopenblas` to where `libopenblas.a` is, which should be under `/your/directory/lib`. You may also need to add `-lpthread` to the last line.
 
-### Running calculations
+### Compilation
+The compilation can be handled by the Bash script `make.sh`. It takes three arguments:
+- `-n`: build from scratch, removes previous `build/` directory and `els.x` binary.
+- `-p`: production-level build, this means more optimisations and less checks. Without this flag a debug build will be carried out, where array boundary checks are enabled, together with `gdb` debugging options enabled.
+- `-g`: GPU acceleration (currently only for the spin-orbital CCSD(T) module). Requires a fairly recent PGI/NVHPC Fortran compiler. This unfortunately disables OpenMP due to a compatibility issue.
+
+## Running calculations
+### File requirements
 A directory with the following files are needed:
 - `els.in` - input settings file, see below
 - `eri.dat` - two-electron (electron repulsion) integrals
