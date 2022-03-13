@@ -113,22 +113,25 @@ The final energy breakdown will contain all energies up to the highest level of 
 
 ### Using the wrapper script
 A fairly capable wrapper script is provided in `utils/els_wrapper`. The settings are in `main` and are all self-explanatory. The most common use for it would be to calculate a binding curve. The outputs will be a directory named `<molecule-name>-<basis-name>`, containing subdirectories named `<bondlength>-<angle>`, and other files detailed below. 
-- `h2o-cc-pvdz/`
-    - `1.20_104.45/`
-        - `s.dat` --Standard integral/geometry files---
-        - `t.dat`
-        - `v.dat`
-        - `eri.dat`
-        - `geom.dat` ------------------------------------
-        - `els.in` Input file
-        - `els.out` Standard output
-        - `guess_in.dat` AO Fock from previous geometry
-        - `guess_out.dat` AO Fock from this geometry
-        - `els_energy.dat` Summarised energies from this calculation
-        - `reference.dat` Summarised energies from the Psi4 calculation
-    - `1.22_104.45`
-    - ...
-    - `binding_energy_els.dat` Numpy-readable datafile containing energies from all points
-    - `binding_energy_psi4.dat` Same but from Psi4
+```
+- h2o-cc-pvdz/
+    - 1.20_104.45/
+        - s.dat ---------------- Standard integral/geometry files
+        - t.dat ---------------- Ditto
+        - v.dat ---------------- Ditto
+        - eri.dat -------------- Ditto
+        - geom.dat ------------- Ditto
+        - els.in --------------- Input file
+        - els.out -------------- els.x standard output
+        - guess_in.dat --------- AO Fock from previous geometry
+        - guess_out.dat -------- AO Fock from this geometry
+        - els_energy.dat ------- Summarised energies from this calculation
+        - reference.dat -------- Summarised energies from the Psi4 calculation
+    - 1.22_104.45/
+        - ...
+    - binding_energy_els.dat --- Numpy-readable datafile containing energies from all points
+    - binding_energy_psi4.dat -- Same but from Psi4
+    - h20-cc-pvdz.psi4out ------ Psi4 standard output
+```
 
 If only a single point is needed, you can also use `utils/psi4_integrals_nosym.py`, which is essentially the same code as above but without running `els.x` automatically.
