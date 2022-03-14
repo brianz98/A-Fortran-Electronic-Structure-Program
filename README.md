@@ -3,6 +3,8 @@ This project is based on the Crawford Group's excellent [C++ Programming Tutoria
 
 The end goal of this project will be performing HF, MP2, CCSD, and CCSD(T), as per the original tutorial, but with additional support for multicore processors (modern CPUs, GPUs).
 
+A report on this project as submitted to the MPhil in Scientific Computing course at the University of Cambridge, can be found [here](https://github.com/brianz98/A-Fortran-Electronic-Structure-Programme/blob/master/report.pdf).
+
 ## Progress / to-do
 - [x] Geometry read-in
 - [x] Integral read-in
